@@ -1,3 +1,11 @@
+# Runtime data dirs (root level only); assets/ is untracked and managed externally
+input*
+output*
+ckpt*
+weight*
+asset*
+exp
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

@@ -1,0 +1,143 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "obj-recon"
+version = "0.1.0"
+description = "SAM 3D Objects mesh reconstruction from masks for v2r_pipeline"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "tyro>=1.0.13",
+  "loguru>=0.7.3",
+  "numpy>=1.26.0,<2.0",
+  "pillow>=10.0.0",
+  "torch==2.8.0+cu128",
+  "torchvision==0.23.0+cu128",
+  "trimesh>=4.0.0",
+  "open3d>=0.18.0",
+  "omegaconf>=2.3.0",
+  "hydra-core>=1.3.0",
+  "opencv-python>=4.8.0",
+  "scipy>=1.11.0",
+  "pytorch3d",
+  "nvdiffrast",
+  "kaolin",
+  "spconv_cu120",
+  "xformers",
+  "gsplat",
+  # gsplat JIT-compiles its C++ extension on first CUDA use; torch's
+  # cpp_extension loader requires ninja at runtime (not just at build time).
+  "ninja",
+  "moge",
+  "sam3d-objects",
+  "sam3d_objects",
+]
+
+[project.scripts]
+obj-recon = "obj_recon.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff", "uv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["obj_recon"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["obj_recon"]
+
+[tool.uv]
+required-version = ">=0.11.3"
+index-strategy = "unsafe-best-match"
+
+# Override the sam3d_objects upstream pins so they don't conflict.
+# MV-SAM3D's requirements.txt hard-pins loguru==0.7.2, open3d==0.18.0,
+# hydra-core==1.3.2, torchaudio==2.5.1+cu121, spconv-cu121, xformers==0.0.28.post3,
+# torch==2.5.1+cu121, moge from an old git rev, etc. — all incompatible with
+# each other or with cu128/RTX 5090. Overrides below relax them to versions that
+# are proven to work in the daid-sam3d env (Blackwell + torch 2.8 cu128).
+override-dependencies = [
+  "loguru>=0.7.3",
+  "hydra-core>=1.3.0",
+  "omegaconf>=2.3.0",
+  "open3d>=0.18.0",
+  "numpy>=1.26.0,<2.0",
+  "pillow>=10.0.0",
+  "torch==2.8.0+cu128",
+  "torchvision==0.23.0+cu128",
+  "spconv_cu120>=2.3.6",
+  "xformers>=0.0.32",
+  "kaolin>=0.18.0",
+  # SAM3D's point-map module imports geometry helpers from MoGe, but obj_recon
+  # never constructs or runs a MoGe model; point maps come from geometry.json.
+  "moge==1.0.0",
+  "pytorch3d>=0.7.9",
+  "nvdiffrast>=0.4.0",
+  # The default Gaussian renderer is gsplat; disable the optional Inria backend
+  # so uv does not resolve or compile diff-gaussian-rasterization.
+  "diff-gaussian-rasterization; sys_platform == 'never'",
+  "gsplat>=1.5.3",
+  "trimesh>=4.0.0",
+  "scipy>=1.11.0",
+  "opencv-python>=4.8.0",
+  # sam3d_objects expects the OLD utils3d API (numpy depth_edge, torch depth_edge,
+  # etc). PyPI/EasternJournalist utils3d>=1.5 renamed them to *_map_edge. The only
+  # public release with the old API is utils3d==0.0.2 (the pin used by
+  # do-as-i-do/reconstruction/env/sam3d.yml). It is python3.12-era pure-python.
+  "utils3d",
+  # The packages below are pulled in transitively by sam3d_objects
+  # requirements.txt but are either broken or unnecessary for our use case
+  # (CPU/inference-only usage). Setting an impossible marker (`sys_platform
+  # == 'never'`) effectively cancels them so uv doesn't try to resolve them.
+  "torchaudio; sys_platform == 'never'",
+  # Training / heavy GPU packages we don't need (only inference):
+  "auto-gptq; sys_platform == 'never'",
+  "bitsandbytes; sys_platform == 'never'",
+  "sagemaker; sys_platform == 'never'",
+  # lightning IS needed at inference time: sam3d_objects.model.io imports
+  # ``lightning.pytorch`` to load checkpoints. Use a torch-2.8-compatible release.
+  "lightning>=2.5.0",
+  "optimum; sys_platform == 'never'",
+  "peft; sys_platform == 'never'",
+  "conda-pack; sys_platform == 'never'",
+  "cuda-python; sys_platform == 'never'",
+  "nvidia-cuda-nvcc-cu12; sys_platform == 'never'",
+  # nvidia-pyindex is a meta-package to enable the ngc index — not a real lib:
+  "nvidia-pyindex; sys_platform == 'never'",
+  # Other junk deps in requirements.txt that pull in big trees:
+  "jupyter; sys_platform == 'never'",
+  "librosa; sys_platform == 'never'",
+  "sentence-transformers; sys_platform == 'never'",
+  "wandb; sys_platform == 'never'",
+  "tensorboard; sys_platform == 'never'",
+]
+
+[tool.uv.sources]
+# MV-SAM3D keeps the upstream project and top-level package name
+# ``sam3d_objects``. It is a superset of upstream (adding
+# pipeline/multi_view_*.py and pose_align/) while preserving single-frame
+# behavior, so both modes use this one source.
+sam3d_objects = { path = "../pkgs/MV-SAM3D", editable = true }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+pytorch3d = { url = "https://github.com/MiroPsota/torch_packages_builder/releases/download/pytorch3d-0.7.9%2Bd9839a9/pytorch3d-0.7.9%2Bd9839a9pt2.8.0cu128-cp311-cp311-linux_x86_64.whl" }
+nvdiffrast = { url = "https://huggingface.co/datasets/multimodalart/zerogpu-blackwell-wheels/resolve/main/wheels/pt28-cu128-cp311/nvdiffrast-0.4.0-cp311-cp311-linux_x86_64.whl" }
+moge = { git = "https://github.com/microsoft/MoGe.git", rev = "a8c37341bc0325ca99b9d57981cc3bb2bd3e255b" }
+utils3d = { git = "https://github.com/EasternJournalist/utils3d.git", rev = "3fab839f0be9931dac7c8488eb0e1600c236e183" }
+kaolin = { url = "https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.8.0_cu128/kaolin-0.18.0-cp311-cp311-linux_x86_64.whl" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.ruff]
+exclude = ["pkgs", ".venv", "build", "dist"]
+line-length = 88
+lint.extend-ignore = ["E203", "E266", "E501"]

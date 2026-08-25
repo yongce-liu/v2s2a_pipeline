@@ -1,0 +1,143 @@
+diff --git a/learning/__init__.py b/learning/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/learning/datasets/__init__.py b/learning/datasets/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/learning/models/__init__.py b/learning/models/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/learning/training/__init__.py b/learning/training/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/learning/training/predict_pose_refine.py b/learning/training/predict_pose_refine.py
+index fabb888..195f69c 100644
+--- a/learning/training/predict_pose_refine.py
++++ b/learning/training/predict_pose_refine.py
+@@ -91,15 +91,16 @@ def make_crop_data_batch(render_size, ob_in_cams, mesh, rgb, depth, K, crop_rati
+ 
+ 
+ class PoseRefinePredictor:
+-  def __init__(self,):
++  def __init__(self, weights_dir=None):
+     logging.info("welcome")
+     self.amp = True
+     self.run_name = "2023-10-28-18-33-37"
+     model_name = 'model_best.pth'
+     code_dir = os.path.dirname(os.path.realpath(__file__))
+-    ckpt_dir = f'{code_dir}/../../weights/{self.run_name}/{model_name}'
++    weights_dir = weights_dir or f'{code_dir}/../../weights'
++    ckpt_dir = f'{weights_dir}/{self.run_name}/{model_name}'
+ 
+-    self.cfg = OmegaConf.load(f'{code_dir}/../../weights/{self.run_name}/config.yml')
++    self.cfg = OmegaConf.load(f'{weights_dir}/{self.run_name}/config.yml')
+ 
+     self.cfg['ckpt_dir'] = ckpt_dir
+     self.cfg['enable_amp'] = True
+diff --git a/learning/training/predict_score.py b/learning/training/predict_score.py
+index 6e15f62..d25a50a 100644
+--- a/learning/training/predict_score.py
++++ b/learning/training/predict_score.py
+@@ -115,15 +115,16 @@ def make_crop_data_batch(render_size, ob_in_cams, mesh, rgb, depth, K, crop_rati
+ 
+ 
+ class ScorePredictor:
+-  def __init__(self, amp=True):
++  def __init__(self, amp=True, weights_dir=None):
+     self.amp = amp
+     self.run_name = "2024-01-11-20-02-45"
+ 
+     model_name = 'model_best.pth'
+     code_dir = os.path.dirname(os.path.realpath(__file__))
+-    ckpt_dir = f'{code_dir}/../../weights/{self.run_name}/{model_name}'
++    weights_dir = weights_dir or f'{code_dir}/../../weights'
++    ckpt_dir = f'{weights_dir}/{self.run_name}/{model_name}'
+ 
+-    self.cfg = OmegaConf.load(f'{code_dir}/../../weights/{self.run_name}/config.yml')
++    self.cfg = OmegaConf.load(f'{weights_dir}/{self.run_name}/config.yml')
+ 
+     self.cfg['ckpt_dir'] = ckpt_dir
+     self.cfg['enable_amp'] = True
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..e3e66aa
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,77 @@
++# Packaging shim so pkgs/FoundationPose can be installed as an editable
++# dependency inside a uv virtual environment (same pattern as pkgs/sam3).
++#
++# NOTE: this file is an addition local to v2s2a_pipeline; upstream
++# FoundationPose code is otherwise unmodified. The two real dependencies that
++# pip cannot express (nvdiffrast and pytorch3d, both compiled against the
++# installed torch/CUDA) must be built separately, e.g.:
++#
++#   pip install --no-build-isolation git+https://github.com/NVlabs/nvdiffrast.git
++#   pip install --no-build-isolation git+https://github.com/facebookresearch/pytorch3d.git
++#
++# and the mycpp extension is built in place (Utils.py adds mycpp/build to
++# sys.path automatically):
++#
++#   cd mycpp && mkdir -p build && cd build && cmake .. && make -j
++
++[build-system]
++requires = ["setuptools>=61", "wheel"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "foundationpose"
++version = "0.1.0"
++description = "FoundationPose: unified 6D object pose estimation and tracking (NVlabs)"
++readme = "readme.md"
++requires-python = ">=3.10"
++license = {file = "LICENSE"}
++classifiers = [
++    "Development Status :: 4 - Beta",
++    "Intended Audience :: Science/Research",
++    "Programming Language :: Python :: 3",
++    "Topic :: Scientific/Engineering :: Artificial Intelligence",
++]
++dependencies = [
++    # Core numerics & IO (mirrors requirements.txt; torch/torchvision come
++    # from the parent project's CUDA-specific index, not from here)
++    "numpy>=1.26",
++    "scipy",
++    "scikit-learn",
++    "h5py",
++    "joblib",
++    "PyYAML>=6",
++    "ruamel.yaml>=0.18",
++    "opencv-python",
++    "imageio",
++    "open3d",
++    "trimesh",
++    "transformations",
++    "matplotlib",
++    "pandas",
++    "Pillow",
++    "pyrender",
++    "pyOpenGL>=3.1",
++    "pyOpenGL_accelerate>=3.1",
++    "kornia>=0.7",
++    "omegaconf>=2.3",
++    "psutil",
++    "tqdm",
++    "warp-lang",
++    "scikit-image",
++]
++
++[tool.setuptools]
++# The upstream repo is a flat script tree (estimater.py, Utils.py, ...) plus
++# the learning/ package; install it as one top-level package so
++# `from estimater import FoundationPose` keeps working.
++py-modules = [
++    "Utils",
++    "datareader",
++    "estimater",
++    "offscreen_renderer",
++]
++packages = ["learning", "learning.datasets", "learning.models", "learning.training"]
++
++# learning/ has no __init__.py upstream; setuptools needs them to treat it as
++# a package. These empty files are build-time only additions (gitignored via
++# learning/**/__init__.py in .gitignore is NOT added — they stay local).

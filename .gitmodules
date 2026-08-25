@@ -1,0 +1,9 @@
+[submodule "pkgs/FoundationPose"]
+	path = pkgs/FoundationPose
+	url = https://github.com/NVlabs/FoundationPose.git
+[submodule "pkgs/HaWoR"]
+	path = pkgs/HaWoR
+	url = https://github.com/ThunderVVV/HaWoR.git
+[submodule "pkgs/MV-SAM3D"]
+	path = pkgs/MV-SAM3D
+	url = https://github.com/devinli123/MV-SAM3D.git

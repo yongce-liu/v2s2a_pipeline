@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hand_recon"
+version = "0.1.0"
+description = "HaWoR-based hand mesh reconstruction for v2s2a_pipeline"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+  "numpy==1.26.4",
+  "opencv-python>=4.8.0",
+  "pillow>=10.0.0",
+  "torch>=2.0.0",
+  "tyro>=1.0.13",
+  "loguru>=0.7.3",
+  "hawor",
+]
+
+[project.scripts]
+hand_recon = "hand_recon.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff", "uv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["hand_recon"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["hand_recon"]
+
+[tool.uv]
+required-version = ">=0.11.3"
+index-strategy = "unsafe-best-match"
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.uv.sources]
+hawor = { path = "../pkgs/HaWoR", editable = true }
+
+[tool.uv.extra-build-dependencies]
+chumpy = ["pip", "setuptools<82", "numpy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.ruff]
+exclude = ["pkgs", ".venv", "build", "dist"]
+line-length = 88
+lint.extend-ignore = ["E203", "E266", "E501"]

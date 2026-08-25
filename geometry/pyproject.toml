@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geometry"
+version = "0.1.0"
+description = "MoGe monocular geometry (point map / depth / normals) for EgoDataPipe selected frames"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  # MoGe itself declares "numpy>=2"; keep aligned instead of pinning 1.x.
+  "numpy>=2",
+  "opencv-python-headless>=4.8,<5",
+  # ^ 4.x is the known-good series with the OpenEXR writer; 5.0 dropped it.
+  "pillow>=10.0.0",
+  "tyro>=1.0.13",
+  "loguru>=0.7.3",
+  "moge",
+  "torch==2.10.0+cu130",
+  "torchvision==0.25.0+cu130",
+]
+
+[project.scripts]
+geometry = "geometry.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff", "uv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["geometry"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["geometry"]
+
+[tool.uv]
+required-version = ">=0.11.3"
+
+[tool.uv.sources]
+moge = {
+  git = "https://github.com/microsoft/MoGe.git",
+  rev = "74fbce054ebed49800de42d0ad0e83495065719a",
+}
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.ruff]
+exclude = ["pkgs", ".venv", "build", "dist"]
+line-length = 88
+lint.extend-ignore = ["E203", "E266", "E501"]

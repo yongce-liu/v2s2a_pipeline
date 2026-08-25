@@ -1,0 +1,1367 @@
+╭─── Claude Code v2.1.241 ─────────────────────────────────────────────────────╮
+│                                                 │ Tips for getting started   │
+│                  Welcome back!                  │ Run /init to create a CLA… │
+│                                                 │ ────────────────────────── │
+│                     ▐▛███▛█                     │ What's new                 │
+│                    ▝▜██████▀                    │ Bug fixes and reliability… │
+│                      ▝▝ ▝▝                      │ Bug fixes and reliability… │
+│                                                 │ Cost estimates (`/cost`, … │
+│           kimi-k3 · API Usage Billing           │ /release-notes for more    │
+│   /…/human-robot/v2r/v2s2a_pipeline/obj_recon   │                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ @.agent/                                                                      
+  https://github.com/devinli123/MV-SAM3D 提供的多视角重建的方案,                
+  现在把这个加入进来, 如果能直接pip + git 安装最好, 如果不可以作为子包安装, 给  
+  @obj_recon/ 加一个多视角的参数(默认方案), 实现更准确的位姿和mesh重建,         
+  间隔帧的位姿 可以交给 @pose_estimation/ 补全, 最后获得较为准确的物体位姿      
+  ⎿  Listed directory .agent/
+  ⎿  Listed directory obj_recon/
+  ⎿  Listed directory pose_estimation/
+
+  Thought for 11s (ctrl+o to expand)
+
+● 我先看一下 MV-SAM3D 仓库的安装方式和现有 obj_recon / pose_estimation 的结构。
+
+  Thought for 14s, read 3 files, listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● Fetch(https://github.com/devinli123/MV-SAM3D)
+  ⎿  Received 324.8KB (200 OK)
+
+  Thought for 12s, read 1 file, ran 2 shell commands (ctrl+o to expand)
+
+❯ 之后深度看能不能直接用 @geometry/ 的输出                                      
+
+● 收到——深度尽量直接复用 geometry 的输出（MoGe 点图 / 深度 / 内参），不引入
+  DA3。继续摸底 MV-SAM3D 的输入契约。
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Vendored sam3d_objects 在上游基础上有改动（新增 pose_align 等）→
+  必须作为子包安装，不能直接 pip+git。继续看推理入口和数据契约。
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Shell cwd 沒有保持。用絕對路徑繼續。
+
+  Searched for 5 patterns, read 1 file, listed 1 directory, ran 2 shell commands (ctrl+o to expand)
+
+● geometry 输出可直接喂入（同一 OpenCV 相机约定，MV-SAM3D 自己做 (-x,-y,z)
+  变换，外部点图时不要求内参）。再确认多视角结果里位姿/layout 是怎么出来的。
+
+  Searched for 1 pattern, ran 3 shell commands (ctrl+o to expand)
+
+● 再确认一个细节：view0
+  位姿解码用的归一化尺度（pointmap_scale/shift）是否在外部点图路径下也有定义。
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● pointmap_scale/shift 由每个视图的 preprocess_image
+  独立计算，外部点图路径同样存在——metric
+  位姿解码成立。情况已经摸清，整体状态和规划如下（实现前有个取舍要你定）：
+
+  摸底结论
+
+  1. 安装方式：不能直接 pip+git，必须按上游仓库的方式 vendored 子包 ✅ 已做
+  - pkgs/MV-SAM3D 已作为 submodule 加入（与 pkgs/sam-3d-objects 并列）
+  - 原因：MV-SAM3D 魔改了 sam3d_objects 包（新增
+    pipeline/multi_view_weighted.py、multi_view_utils.py、pose_align/，改了
+    inference_pipeline.py），用 pip install git+... 会按 name = "sam3d_objects"
+    解析依赖——它 hard-pin torch 2.5.1+cu121、kaolin 0.17.0 等，和 obj_recon
+    现有的 torch 2.8+cu128 / RTX 5090 依赖矩阵完全冲突，会和你 uv override
+    修复过的 wheel 矩阵打架。
+  - 正确做法 = 和上游 sam-3d-objects 一样：[tool.uv.sources] sam3d-objects-mv = 
+    { path = "../pkgs/MV-SAM3D", editable = true } + 复用现有 override
+    矩阵。它用的模型权重和单视角完全相同（同上游 checkpoints），故无需新权重。
+
+  2. geometry 输出复用（你最新的要求）——成立，且是官方外部 pointmap 路径
+  - run_multi_view(view_pointmaps=...) 直接吃外部 per-view point map；注释里明确
+    DA3/MoGe 约定一致（OpenCV x→ / y↓ / z前），代码统一做 (-x,-y,z) →
+    PyTorch3D。geometry 的 MoGe points.npy 可以直接喂，不用改坐标。
+  - 注释还确认：外部 pointmap
+    路径不依赖内参（内参从点图每视图独立推断，pointmap_scale/shift
+    也逐视图算）——metric 位姿没问题。
+  - ⚠️ 唯一要丢的：官方 --da3_output 还顺带提供 1) extrinsics（相机外参，仅供
+    latent-visibility 分析和 pose_opt 的场景对齐）和 2)
+    scene.glb（场景点云用于最终 pose optimization）。这两块如果您默认
+    stage2_weight_source=entropy，都不是必需。
+
+  3. 默认方案（视差大的前 N 帧 MV → 密集帧 pose 由 pose_estimation 补）— 
+  技术路径是通的
+  - Stage1(multidiffusion→加权) + Stage2(entropy 加权) + mesh输出 glb、view0
+    位姿 rotation/translation/scale + 每帧解码位姿
+    all_view_poses_decoded，一次拿到「fusionmesh + 每视图 metric 位姿」。
+
+  实现前需要你定的取舍
+
+  MV-SAM3D 镜像的重量依赖（finetuned generator、TRELLIS
+  decode、layout_post_optimization）和单视角仓库同名同结构，但 pose_optimization
+  希望在「scene 完整点云」上跑——它用 DA3 背景+物体点云。用 geometry
+  的话背景=仅物体 mask 内的 MoGe 点。
+
+● User answered Claude's questions:
+  ⎿  · MV-SAM3D 接入 obj_recon 的策略怎么定? → 1. 阶段一: MV keyframes + 
+     pose_estimation fallback (推荐) ✔
+          obj_recon 加 --multi-view 参数: 选 N 个视差最大且 mask/pointmap 
+     质量好的关键帧 → InferencePipelinePointMap.run_multi_view (entropy-weighted
+     Stage2) 输出融合 mesh + every-keyframe metric pose; 位姿写回 poses/ 交给 
+     pose_estimation 在规定关键帧间 FoundationPose track 补全。pose_align 
+     (scene-level pose optimization) 先跳过.
+     选 N 个视差最大且
+        mask/pointmap 质量好的关键帧 →
+     这个很难做, 就先支持 手动输入参数选择, 获得等距选择, 获得 
+     ffprobe获得关键帧选择
+     · 多视角的帧怎么选 (默认是视差好的)? → 这个问题我在上一个方案问题回答了
+     手动 / 等距 / ffprobe 获得关键帧列表 如果输入图片过多, 
+     你后面还要考虑继续降采样
+
+  Searched for 1 pattern, read 4 files, ran 2 shell commands (ctrl+o to expand)
+
+● 继续挖数据加载的关键细节：all_view_poses_raw 的产生位置、weighted script 的
+  DA3→pointmap 加载、weighting_config 构造。
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● all_view_poses_raw 在这个 checkout 里从未被写入（run_multi_view
+  处防御性判空）→ keyframe 位姿只能靠主 pose（view0） + pose_estimation
+  补全，回看主位姿就能用。再看 weighted script 的 npz 点图格式和 Intrinsics
+  的用法，确认 geometry 怎么喂。
+
+  Searched for 3 patterns, ran 4 shell commands (ctrl+o to expand)
+
+● Update(pyproject.toml)
+  ⎿  Added 7 lines
+      33    "ninja",
+      34    "moge",
+      35    "sam3d-objects",
+      36 +  # Multi-view (MV-SAM3D) variant of SAM 3D Objects, vendored l
+         +ike the upstream                                               
+      37 +  # checkout. Both provide a top-level ``sam3d_objects`` packag
+         +e; pip rejects                                                 
+      38 +  # overlapping wheels, but both are editable path deps so they
+         + install as                                                    
+      39 +  # symlink farms and the LAST source in [tool.uv.sources] wins
+         + the namespace.                                                
+      40 +  # The MV checkout adds the multi-view modules (pipeline/multi
+         +_view_*.py,                                                    
+      41 +  # pose_align/) that the single-view checkout lacks. See multi
+         +view.py.                                                       
+      42 +  "sam3d-objects-mv",                                          
+      43  ]
+      44  
+      45  [project.scripts]
+
+● Update(pyproject.toml)
+  ⎿  Added 5 lines
+      120  
+      121  [tool.uv.sources]
+      122  sam3d-objects = { path = "../pkgs/sam-3d-objects", editable = 
+           true }
+      123 +# Both checkouts provide the same ``sam3d_objects`` top-level 
+          +package. This MV                                              
+      124 +# checkout is LAST on purpose: for editable path deps (symlink
+          + farms) the last                                              
+      125 +# source wins the package namespace, and only the MV checkout 
+          +has                                                           
+      126 +# ``sam3d_objects.pipeline.multi_view_weighted`` / ``pose_alig
+          +n``.                                                          
+      127 +sam3d-objects-mv = { path = "../pkgs/MV-SAM3D", editable = tru
+          +e }                                                           
+      128  torch = { index = "pytorch-cu128" }
+      129  torchvision = { index = "pytorch-cu128" }
+      130  pytorch3d = { url = "https://github.com/MiroPsota/torch_packag
+           es_builder/releases/download/pytorch3d-0.7.9%2Bd9839a9/pytorch
+           3d-0.7.9%2Bd9839a9pt2.8.0cu128-cp311-cp311-linux_x86_64.whl" }
+
+● Update(obj_recon/sam3d_pipeline.py)
+  ⎿  Added 7 lines, removed 1 line
+       1 -"""SAM3D pipeline variant that requires externally computed geo
+         -metry."""                                                      
+       1 +"""SAM3D pipeline variant that requires externally computed geo
+         +metry.                                                         
+       2  
+       3 +NOTE: this module must be importable with EITHER ``sam3d_object
+         +s`` checkout                                                   
+       4 +(the upstream single-view one or the MV-SAM3D one) providing th
+         +e namespace —                                                  
+       5 +``reconstruct.py`` imports it for the single-frame path even wh
+         +en the MV                                                      
+       6 +checkout is the one on ``sys.path``. Only multi-view code may r
+         +ely on                                                         
+       7 +MV-only modules (``pipeline.multi_view_weighted`` etc.)."""    
+       8 +                                                               
+       9  from __future__ import annotations
+      10  
+      11  import torch
+
+● 现在写核心 multiview.py:
+
+● Write(obj_recon/multiview.py)
+  ⎿  Wrote 545 lines to obj_recon/multiview.py
+      1 """Multi-view object reconstruction via MV-SAM3D (vendored under 
+      2 
+      3 Flows a small set of keyframes through ``InferencePipelinePointMa
+      4 with the default entropy-weighted fusion, reusing the SAME ``geom
+        etry``-stage
+        ). Emits
+      6 
+        mesh.obj``), and
+      8 * a reference keyframe metric pose (view-0 ``layout.json``) consu
+      9   ``pose_estimation`` the same way the single-frame output is.
+     … +650 lines (ctrl+o to expand)
+  Thought for 19s (ctrl+o to expand)
+
+● 继续接 CLI。先修 multiview.py 一个冗余变量：
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 6 lines, removed 3 lines
+      387                  continue
+      388              rgba = load_rgba_image(resolve_frame_path(entry, f
+           rames_json=frames_json, masks_json=masks_json))
+      389              rgba = _resize_rgba(rgba, ds)
+      390 -            m_full = np.asarray(Image.fromarray(mask_to_alpha(
+          -mask)).resize((rgba.shape[1], rgba.shape[0]), Image.NEAREST)) 
+          -> 0                                                           
+      390 +            m_resized = np.asarray(                           
+      391 +                Image.fromarray(mask_to_alpha(mask)).resize(  
+      392 +                    (rgba.shape[1], rgba.shape[0]), Image.NEAR
+          +EST                                                           
+      393 +                )                                             
+      394 +            )                                                 
+      395              pts = _mv_pointmap(np.load(geometry_frames[idx].po
+           ints_path), mask, downsample=ds)
+      392 -            # mask_to_alpha gives a view of the full-res mask;
+          - ensure consistent shape                                      
+      393 -            rgba = np.dstack([rgba[..., :3], mask_to_alpha(m_f
+          -ull)])                                                        
+      396 +            rgba = np.dstack([rgba[..., :3], m_resized])      
+      397              images.append(rgba)
+      398              vmasks.append(None)  # mask already embedded in al
+           pha channel
+      399              pointmaps.append(pts)
+
+  Thought for 18s (ctrl+o to expand)
+
+● Update(obj_recon/cli.py)
+  ⎿  Added 1 line
+      26  import tyro
+      27  from loguru import logger
+      28  
+      29 +from obj_recon.multiview import MultiViewArgs, reconstruct_mult
+         +iview                                                          
+      30  from obj_recon.reconstruct import MeshReconArgs, reconstruct_vi
+          deo
+      31  
+      32  # Registration/init frame shared with pose_estimation's ``--ini
+          t-frame``.
+
+● Update(obj_recon/cli.py)
+  ⎿  Added 25 lines
+       77      recon: MeshReconArgs = field(default_factory=MeshReconArgs
+           )
+       78      """SAM 3D Objects reconstruction settings."""
+       79  
+       80 +    mv: MultiViewArgs = field(default_factory=MultiViewArgs)  
+       81 +    """Multi-view (MV-SAM3D) reconstruction settings. Enable w
+          +ith                                                           
+       82 +    ``--mv.enabled`` (defaults to off → single-frame mode)."""
+       83  
+       84 +                                                              
+       85  def main() -> None:
+       86      args = tyro.cli(ObjReconCliArgs)
+       87  
+       88 +    if args.mv.enabled:                                       
+       89 +        # Multi-view (MV-SAM3D): fuse keyframes into one mesh 
+          +per object and a                                              
+       90 +        # reference (view-0) metric pose; pose_estimation fill
+          +s the rest.                                                   
+       91 +        manual = args.frame_index if args.mv.keyframe_strategy
+          + == "manual" else None                                        
+       92 +        out = reconstruct_multiview(                          
+       93 +            args.masks_json,                                  
+       94 +            geometry_json=args.geometry_json,                 
+       95 +            frames_json=args.frames_json,                     
+       96 +            output_root=args.output_root,                     
+       97 +            prompt_ids=args.prompt_id,                        
+       98 +            recon_args=args.recon,                            
+       99 +            mv_args=args.mv,                                  
+      100 +        )                                                     
+      101 +        logger.info(                                          
+      102 +            "[obj_recon] multi-view complete: {} objects under
+          + {} (keyframes {})",                                          
+      103 +            len(out["objects"]),                              
+      104 +            out["meshes_dir"],                                
+      105 +            out["keyframes"],                                 
+      106 +        )                                                     
+      107 +        return                                                
+      108 +                                                              
+      109      # Single-frame by default: the object is rigid, so one fra
+           me's mesh fixes
+      110      # its (constant) size; the other frames only need poses, n
+           ot new meshes.
+      111      frame_indices = args.frame_index if args.frame_index else 
+           [DEFAULT_INIT_FRAME]
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● uv 要求依赖名 == 包 metadata 名。MV 的 pyproject.toml 也是 name = 
+  "sam3d_objects"。加 normalized 名、去掉 alias:
+
+● Update(pyproject.toml)
+  ⎿  Added 1 line, removed 7 lines
+      33    "ninja",
+      34    "moge",
+      35    "sam3d-objects",
+      36 -  # Multi-view (MV-SAM3D) variant of SAM 3D Objects, vendored l
+         -ike the upstream                                               
+      37 -  # checkout. Both provide a top-level ``sam3d_objects`` packag
+         -e; pip rejects                                                 
+      38 -  # overlapping wheels, but both are editable path deps so they
+         - install as                                                    
+      39 -  # symlink farms and the LAST source in [tool.uv.sources] wins
+         - the namespace.                                                
+      40 -  # The MV checkout adds the multi-view modules (pipeline/multi
+         -_view_*.py,                                                    
+      41 -  # pose_align/) that the single-view checkout lacks. See multi
+         -view.py.                                                       
+      42 -  "sam3d-objects-mv",                                          
+      36 +  "sam3d_objects",                                             
+      37  ]
+      38  
+      39  [project.scripts]
+
+● Update(pyproject.toml)
+  ⎿  Added 7 lines, removed 6 lines
+      113  ]
+      114  
+      115  [tool.uv.sources]
+      116 -sam3d-objects = { path = "../pkgs/sam-3d-objects", editable = 
+          -true }                                                        
+      117 -# Both checkouts provide the same ``sam3d_objects`` top-level 
+          -package. This MV                                              
+      118 -# checkout is LAST on purpose: for editable path deps (symlink
+          - farms) the last                                              
+      119 -# source wins the package namespace, and only the MV checkout 
+          -has                                                           
+      120 -# ``sam3d_objects.pipeline.multi_view_weighted`` / ``pose_alig
+          -n``.                                                          
+      121 -sam3d-objects-mv = { path = "../pkgs/MV-SAM3D", editable = tru
+          -e }                                                           
+      116 +# NOTE: both checkouts declare the SAME project name ``sam3d_o
+          +bjects`` and the                                              
+      117 +# same top-level ``sam3d_objects`` package; uv sources key on 
+          +the normalized                                                
+      118 +# name, so they collide. We therefore depend on the name once 
+          +(both deps above)                                             
+      119 +# and point it at the MV checkout — it is a superset of upstre
+          +am (adds                                                      
+      120 +# pipeline/multi_view_*.py, pose_align/) and single-frame beha
+          +vior is unchanged.                                            
+      121 +# The upstream checkout is kept vendored for reference/diffing
+          + only.                                                        
+      122 +sam3d_objects = { path = "../pkgs/MV-SAM3D", editable = true }
+      123  torch = { index = "pytorch-cu128" }
+      124  torchvision = { index = "pytorch-cu128" }
+      125  pytorch3d = { url = "https://github.com/MiroPsota/torch_packag
+           es_builder/releases/download/pytorch3d-0.7.9%2Bd9839a9/pytorch
+           3d-0.7.9%2Bd9839a9pt2.8.0cu128-cp311-cp311-linux_x86_64.whl" }
+
+● Update(obj_recon/sam3d_pipeline.py)
+  ⎿  Added 1 line, removed 7 lines
+       1 -"""SAM3D pipeline variant that requires externally computed geo
+         -metry.                                                         
+       1 +"""SAM3D pipeline variant that requires externally computed geo
+         +metry."""                                                      
+       2  
+       3 -NOTE: this module must be importable with EITHER ``sam3d_object
+         -s`` checkout                                                   
+       4 -(the upstream single-view one or the MV-SAM3D one) providing th
+         -e namespace —                                                  
+       5 -``reconstruct.py`` imports it for the single-frame path even wh
+         -en the MV                                                      
+       6 -checkout is the one on ``sys.path``. Only multi-view code may r
+         -ely on                                                         
+       7 -MV-only modules (``pipeline.multi_view_weighted`` etc.)."""    
+       8 -                                                               
+       3  from __future__ import annotations
+       4  
+       5  import torch
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 5 lines, removed 6 lines
+      10  
+      11  Installation note
+      12  -----------------
+      13 -Both ``pkgs/sam-3d-objects`` and ``pkgs/MV-SAM3D`` ship a top-l
+         -evel                                                           
+      14 -``sam3d_objects`` package. They are uv *editable path* sources 
+         -(symlink farms),                                               
+      15 -so both can be installed at once; the LAST source in ``[tool.uv
+         -.sources]`` wins                                               
+      16 -the namespace. Only the MV checkout provides ``pipeline.multi_v
+         -iew_weighted`` /                                               
+      17 -``pose_align``, so it is last and this module imports it lazily
+         - at runtime —                                                  
+      18 -keeping the rest of ``obj_recon`` importable without the MV che
+         -ckout.                                                         
+      13 +``obj_recon`` points its single ``sam3d_objects`` dependency at
+      14 +``pkgs/MV-SAM3D``: it declares the same project / top-level pac
+         +kage as upstream,                                              
+      15 +so both checkouts cannot coexist as two pip deps, and MV-SAM3D 
+         +is a superset                                                  
+      16 +(adds `pipeline.multi_view_*`, `pose_align`) with unchanged sin
+         +gle-frame                                                      
+      17 +behavior.                                                      
+      18  """
+      19  
+      20  from __future__ import annotations
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 环境切换到了 MV checkout。看一下 tests 结构并做 import/单测验证：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 17 单测全过。检查推理权重存在并端到端小测（2 keyframes、单帧 pose_decoder
+  冒烟，GPU 上跑）：
+
+  Searched for 3 patterns, listed 2 directories, ran 1 shell command (ctrl+o to expand)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Error editing file
+
+● 手滑,跳过这个。跑端到端测试 — 先确认 outputs 相对路径的解析基准：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 两侧同步。跑端到端 MV-SAM3D(2 个手动关键帧），日志落盘、后台执行：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 后台跑的同时，更新 README / cli.md：
+
+  Read 2 files (ctrl+o to expand)
+
+● Background command "Run MV-SAM3D end-to-end with 2 keyframes (background)"
+completed (exit code 0)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 1 line, removed 1 line
+      324          strategy=mv_args.keyframe_strategy,
+      325          num_views=mv_args.num_views,
+      326          max_views_cap=mv_args.max_views_cap,
+      327 -        manual=None,                                          
+      327 +        manual=manual_frame_index,                            
+      328          video=video,
+      329      )
+      330      logger.info("[mv] strategy={} -> keyframes={}", mv_args.ke
+           yframe_strategy, keyframes)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 1 line
+      294      prompt_ids: Sequence[str] | None = None,
+      295      recon_args: MeshReconArgs,
+      296      mv_args: MultiViewArgs,
+      297 +    manual_frame_index: Sequence[int] | None = None,          
+      298  ) -> dict:
+      299      """Run MV-SAM3D over selected keyframes; write fused meshe
+           s + reference poses."""
+      300      masks_json = Path(masks_json).expanduser().resolve()
+
+● Update(obj_recon/cli.py)
+  ⎿  Added 1 line, removed 1 line
+      88      if args.mv.enabled:
+      89          # Multi-view (MV-SAM3D): fuse keyframes into one mesh p
+          er object and a
+      90          # reference (view-0) metric pose; pose_estimation fills
+           the rest.
+      91 -        manual = args.frame_index if args.mv.keyframe_strategy 
+         -== "manual" else None                                          
+      91          out = reconstruct_multiview(
+      92              args.masks_json,
+      93              geometry_json=args.geometry_json,
+     ...
+       96              prompt_ids=args.prompt_id,
+       97              recon_args=args.recon,
+       98              mv_args=args.mv,
+       99 +            manual_frame_index=args.frame_index,              
+      100          )
+      101          logger.info(
+      102              "[obj_recon] multi-view complete: {} objects under
+            {} (keyframes {})",
+
+  Thought for 20s, ran 1 shell command (ctrl+o to expand)
+● 模型加载需要几分钟。趁机更新文档：
+
+● Update(README.md)
+  ⎿  Added 7 lines
+       6  `obj_recon/` stage directory. SAM3D's internal MoGe model is di
+          sabled: geometry
+       7  is estimated once upstream rather than recomputed here.
+       8  
+       9 +Two modes are supported:                                       
+      10 +                                                               
+      11 +- **single-view (default)** — one canonical mesh per selected f
+         +rame;                                                          
+      12 +- **multi-view (`--mv.enabled`, MV-SAM3D)** — fuse several keyf
+         +rames into one                                                 
+      13 +  higher-fidelity mesh per object plus a view-0 metric pose, re
+         +using the same                                                 
+      14 +  geometry point maps (no DA3). See [Multi-view mode](#multi-vi
+         +ew-mode-mv-sam3d).                                             
+      15 +                                                               
+      16  ## Install
+      17  
+      18  ```bash
+
+● Update(README.md)
+  ⎿  Added 8 lines, removed 1 line
+      24  CUDA >= 12.8 (PyTorch cu128 wheels for RTX 5090 / sm_120).
+      25  
+      26  `sam-3d-objects` is installed as an editable path dependency fr
+          om
+      27 -`../pkgs/sam-3d-objects`. Several heavy CUDA extensions are pin
+         -ned to                                                         
+      27 +`../pkgs/MV-SAM3D` (the multi-view fork). It declares the SAME 
+         +project name                                                   
+      28 +(`sam3d_objects`) and top-level package as the upstream        
+      29 +`../pkgs/sam-3d-objects`, so only one can be the active source 
+         +— uv sources key                                               
+      30 +on the normalized name. MV-SAM3D is a superset of upstream (add
+         +s                                                              
+      31 +`sam3d_objects.pipeline.multi_view_weighted`, `multi_view_utils
+         +`,                                                             
+      32 +`pose_align/`) with unchanged single-frame behavior, so both th
+         +e single-view                                                  
+      33 +and multi-view paths run against it. The upstream checkout stay
+         +s vendored for                                                 
+      34 +reference/diffing. Several heavy CUDA extensions are pinned to 
+      35  **prebuilt wheels** matching the daid-sam3d env (torch 2.8.0+cu
+          128, py3.11,
+      36  Blackwell) — see `[tool.uv.sources]` in `pyproject.toml`:
+      37  
+
+● Background command "Re-run MV-SAM3D end-to-end (fixed manual passing)"
+completed (exit code 0)
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● 0 和 44 都在交集里。那 [44] 意味着 0 被漏掉。重新精确看 manual
+  分支的过滤逻辑。
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● select_keyframes 本身是对的（可复现 [0, 44])。但前次 CLI 运行传的是旧的
+  manual=None——重跑时 uv 重装包后改动才生效。现在正确重跑：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 趁模型运行，把更稳的 try/finally 输出兜底也先想清，同时更新 cli.md 加 MV
+  一行：
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Background command "Re-run MV-SAM3D after manual fix landed" completed (exit
+code 0)
+
+● uv run (obj_recon cwd) 没问题。但失败的正是这条 .venv/bin/python
+  路径。这次命令是从 obj_recon cwd 起的。在 obj_recon cwd 下手动路径也是 [0,44]…
+
+  啊，关键点：失败的 .venv/bin/python 命令是 cd /mnt/.../v2s2a_pipeline && ... —
+  从包外 cwd 运行。在 obj_recon cwd 内却是好的。加调试直接复现：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 在这段等价脚本里没问题，那说明 CLI 运行时的 usable 计算没问题、但 manual 进
+  select_keyframes 时可能变成了 [44]。唯一不同：CLI 用 tyro
+  解析。而且我之前的运行其实还有更早的 stderr。
+
+  直接复现整条 CLI 并在 multiview.py 加一个一次性 debug:
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 4 lines, removed 1 line
+      163          if missing:
+      164              logger.warning("[mv] manual keyframes without mask
+           /geometry ignored: {}", missing)
+      165          if len(sel) < 2:
+      166 -            raise ValueError(f"manual keyframes must contain >
+          -=2 usable frames, got {sel}")                                 
+      166 +            raise ValueError(                                 
+      167 +                f"manual keyframes must contain >=2 usable fra
+          +mes, got {sel} "                                              
+      168 +                f"(manual={list(manual)!r}, n_usable={len(all_
+          +indices)})"                                                   
+      169 +            )                                                 
+      170          sel = sorted(sel, key=lambda i: order[i])  # preserve 
+           user order (view 0 first)
+      171      elif strategy == "ffprobe":
+      172          snapped = _ffprobe_keyframes(video, all_indices) if vi
+           deo else None
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● manual=[44] — tyro 把 --frame-index 0 --frame-index 44 解析成
+  [44]（贪心匹配，只留最后一个）。实测一下：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● tyro 确认是 greedy-subcommand + 重复 list flag 的已知问题。用 --frame-index '0
+  44' 空格分隔更稳：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 空格分隔也 exit。用 tyro 的无歧义 --frame-index '0' '44'（多 positional):
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● --frame-index 0 44（单次 flag、多 positional）得到 [0,
+  44]。用此格式重跑端到端：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 顺手把调试 raise 保留（也有诊断价值），去掉 deprecated Image.BILINEAR:
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 1 line, removed 1 line
+      238          return rgba
+      239      h, w = rgba.shape[:2]
+      240      return np.asarray(
+      241 -        Image.fromarray(rgba).resize((w // downsample, h // do
+          -wnsample), Image.BILINEAR)                                    
+      241 +        Image.fromarray(rgba).resize((w // downsample, h // do
+          +wnsample), Image.Resampling.BILINEAR)                         
+      242      )
+      243  
+      244  
+
+● Background command "Run MV-SAM3D with correct CLI list syntax" completed (exit
+code 0)
+
+  Read 1 file (ctrl+o to expand)
+
+● 跑到 preprocess 前的 infer_intrinsics_from_pointmap 挂了（z+shift=0 产生
+  NaN)。MV 对外部点图丢弃 geometry 内参重新推断，MoGe
+  内部又失败。正确的修法是按用户思路：直接用 geometry 输出的内参，通过多层
+  torch.no_grad 在 MV 的内部预处理前接管内参。看 MV 这部分代码：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 在 multiview.py 里做局部 patch，把 geometry
+  的已知内参注入（外部点图分支丢弃内参）：
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 48 lines
+      186      return sel
+      187  
+      188  
+      189 +def _patch_mv_compute_pointmap_intrinsics(pipeline) -> None:  
+      190 +    """Inject geometry-stage intrinsics into MV-SAM3D's extern
+          +al-pointmap branch.                                           
+      191 +                                                              
+      192 +    MV's ``compute_pointmap`` sets ``intrinsics = None`` for e
+          +xternal point maps                                            
+      193 +    and re-infers them via ``infer_intrinsics_from_pointmap`` 
+          +(MoGe's                                                       
+      194 +    ``recover_focal_shift`` least-squares). On MoGe's own poin
+          +t maps that solver                                            
+      195 +    hits z+shift=0 → NaN → "Residuals are not finite". We wrap
+          + the method so                                                
+      196 +    the queued per-view intrinsics are consumed in order, skip
+          +ping the solver.                                              
+      197 +    """                                                       
+      198 +    import types                                              
+      199 +                                                              
+      200 +    orig = pipeline.compute_pointmap.__func__ if hasattr(pipel
+          +ine.compute_pointmap, "__func__") else pipeline.compute_pointm
+          +ap                                                            
+      201 +    if getattr(orig, "_mv_intrinsics_patched", False):        
+      202 +        return                                                
+      203 +    pending: list = []                                        
+      204 +                                                              
+      205 +    def compute_pointmap(self, image, pointmap=None):         
+      206 +        # Temporarily carry a flag the wrapper can see from in
+          +side orig.                                                    
+      207 +        self._mv_skip_infer = bool(pending)                   
+      208 +        try:                                                  
+      209 +            out = orig(self, image, pointmap=pointmap)        
+      210 +        finally:                                              
+      211 +            self._mv_skip_infer = False                       
+      212 +        if pending and out is not None:                       
+      213 +            intr = pending.pop(0)                             
+      214 +            out["intrinsics"] = intr.to(self.device)          
+      215 +        return out                                            
+      216 +                                                              
+      217 +    compute_pointmap._mv_intrinsics_patched = True            
+      218 +    # Bypass the solver by monkeypatching the pipeline's modul
+          +e-level helper.                                               
+      219 +    import sam3d_objects.pipeline.inference_pipeline_pointmap 
+          +as ipm                                                        
+      220 +                                                              
+      221 +    real_infer = ipm.infer_intrinsics_from_pointmap           
+      222 +                                                              
+      223 +    def _stub(points, device=None):                           
+      224 +        pipe = getattr(_stub, "_pipeline", None)              
+      225 +        if pipe is not None and getattr(pipe, "_mv_skip_infer"
+          +, False) and pending:                                         
+      226 +            return {"intrinsics": pending[0].to(device or "cpu
+          +")}                                                           
+      227 +        return real_infer(points, device=device)              
+      228 +                                                              
+      229 +    _stub._pipeline = pipeline                                
+      230 +    ipm.infer_intrinsics_from_pointmap = _stub                
+      231 +                                                              
+      232 +    pipeline.compute_pointmap = types.MethodType(compute_point
+          +map, pipeline)                                                
+      233 +    pipeline._mv_pending_intrinsics = pending                 
+      234 +    pipeline._mv_real_infer = real_infer                      
+      235 +                                                              
+      236 +                                                              
+      237  def _load_mv_inference(args: MeshReconArgs):
+      238      """Instantiate the MV-SAM3D point-map pipeline (depth mode
+           l disabled).
+      239  
+
+● 现在把内参加载+排队接入流程，并 remove leaky orig 引用：
+
+● Update(obj_recon/multiview.py)  ⎿  Added 1 line
+      413      device = resolve_torch_device(recon_args.device)
+      414      set_cuda_device_if_indexed(device)
+      415      pipeline = _load_mv_inference(recon_args)
+      416 +    _patch_mv_compute_pointmap_intrinsics(pipeline)           
+      417  
+      418      # Downsample factor so the model sees <= ~518px while we k
+           eep full-res masks.
+      419      ds = 2
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 7 lines
+      450              vmasks.append(None)  # mask already embedded in al
+           pha channel
+      451              pointmaps.append(pts)
+      452              used_frames.append(idx)
+      453 +            # Intrinsics for the *downsampled* image, pixel-sp
+          +ace then normalized                                           
+      454 +            # (same convention as reconstruct._load_intrinsics
+          +).                                                            
+      455 +            K = np.load(geometry_frames[idx].intrinsics_path).
+          +astype(np.float32, copy=True)                                 
+      456 +            h2, w2 = rgba.shape[:2]                           
+      457 +            K[0, :] /= w2                                     
+      458 +            K[1, :] /= h2                                     
+      459 +            pipeline._mv_pending_intrinsics.append(torch.from_
+          +numpy(K))                                                     
+      460  
+      461          if len(images) < 2:
+      462              logger.warning("[mv] object '{}' has <2 usable vie
+           ws, skipping", prompt_id)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 6 lines, removed 9 lines
+      197      """
+      198      import types
+      199  
+      200 -    orig = pipeline.compute_pointmap.__func__ if hasattr(pipel
+          -ine.compute_pointmap, "__func__") else pipeline.compute_pointm
+          -ap                                                            
+      201 -    if getattr(orig, "_mv_intrinsics_patched", False):        
+      202 -        return                                                
+      200      pending: list = []
+      201  
+      202 +    # Capture the unbound original once (avoid a leaky recursi
+          +on reference).                                                
+      203 +    orig = type(pipeline).compute_pointmap                    
+      204 +    _marker = "_mv_intrinsics_patched"                        
+      205 +    if getattr(pipeline, _marker, False):                     
+      206 +        return                                                
+      207 +                                                              
+      208      def compute_pointmap(self, image, pointmap=None):
+      206 -        # Temporarily carry a flag the wrapper can see from in
+          -side orig.                                                    
+      209          self._mv_skip_infer = bool(pending)
+      210          try:
+      211              out = orig(self, image, pointmap=pointmap)
+      212          finally:
+      213              self._mv_skip_infer = False
+      212 -        if pending and out is not None:                       
+      213 -            intr = pending.pop(0)                             
+      214 -            out["intrinsics"] = intr.to(self.device)          
+      214          return out
+      216 -                                                              
+      217 -    compute_pointmap._mv_intrinsics_patched = True            
+      215      # Bypass the solver by monkeypatching the pipeline's modul
+           e-level helper.
+      216      import sam3d_objects.pipeline.inference_pipeline_pointmap 
+           as ipm
+      217  
+
+● Update(obj_recon/multiview.py)
+  ⎿  Error editing file
+
+● 查看函数现状，清理残余：
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 9 lines, removed 8 lines
+      208      def compute_pointmap(self, image, pointmap=None):
+      209          self._mv_skip_infer = bool(pending)
+      210          try:
+      211 -            out = orig(self, image, pointmap=pointmap)        
+      211 +            return orig(self, image, pointmap=pointmap)       
+      212          finally:
+      213              self._mv_skip_infer = False
+      214 -        return out                                            
+      215 -    # Bypass the solver by monkeypatching the pipeline's modul
+          -e-level helper.                                               
+      214 +                                                              
+      215 +    # Bypass the solver by monkeypatching the pipeline's modul
+          +e-level helper:                                               
+      216 +    # while a geometry intrinsics is queued (``_mv_skip_infer`
+          +` is True inside                                              
+      217 +    # the call above), return it instead of running MoGe's rec
+          +over_focal_shift                                              
+      218 +    # (which NaNs on z+shift=0 for MoGe point maps). pop() con
+          +sumes in order.                                               
+      219      import sam3d_objects.pipeline.inference_pipeline_pointmap 
+           as ipm
+      220  
+      221      real_infer = ipm.infer_intrinsics_from_pointmap
+      222  
+      223      def _stub(points, device=None):
+      221 -        pipe = getattr(_stub, "_pipeline", None)              
+      222 -        if pipe is not None and getattr(pipe, "_mv_skip_infer"
+          -, False) and pending:                                         
+      223 -            return {"intrinsics": pending[0].to(device or "cpu
+          -")}                                                           
+      224 +        if getattr(pipeline, "_mv_skip_infer", False) and pend
+          +ing:                                                          
+      225 +            return {"intrinsics": pending.pop(0).to(device or 
+          +"cpu")}                                                       
+      226          return real_infer(points, device=device)
+      227  
+      226 -    _stub._pipeline = pipeline                                
+      228      ipm.infer_intrinsics_from_pointmap = _stub
+      229  
+      230      pipeline.compute_pointmap = types.MethodType(compute_point
+           map, pipeline)
+      231      pipeline._mv_pending_intrinsics = pending
+      231 -    pipeline._mv_real_infer = real_infer                      
+      232 +    setattr(pipeline, _marker, True)                          
+      233  
+      234  
+      235  def _load_mv_inference(args: MeshReconArgs):
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 9 lines, removed 3 lines
+      218      # (which NaNs on z+shift=0 for MoGe point maps). pop() con
+           sumes in order.
+      219      import sam3d_objects.pipeline.inference_pipeline_pointmap 
+           as ipm
+      220  
+      221 -    real_infer = ipm.infer_intrinsics_from_pointmap           
+      221 +    # MV calls `infer_intrinsics_from_pointmap` (module-scope 
+          +symbol inside                                                 
+      222 +    # inference_pipeline_pointmap); the class attribute is wha
+          +t `orig` resolves.                                            
+      223 +    if "infer_intrinsics_from_pointmap" in type(pipeline).__di
+          +ct__:                                                         
+      224 +        orig_infer = type(pipeline).infer_intrinsics_from_poin
+          +tmap                                                          
+      225 +    else:                                                     
+      226 +        orig_infer = ipm.infer_intrinsics_from_pointmap       
+      227  
+      228      def _stub(points, device=None):
+      229          if getattr(pipeline, "_mv_skip_infer", False) and pend
+           ing:
+      230              return {"intrinsics": pending.pop(0).to(device or 
+           "cpu")}
+      226 -        return real_infer(points, device=device)              
+      231 +        return orig_infer(points, device=device)              
+      232  
+      228 -    ipm.infer_intrinsics_from_pointmap = _stub                
+      233 +    # Patch at class level so the wrapper's `orig` call also s
+          +ees it.                                                       
+      234 +    type(pipeline).infer_intrinsics_from_pointmap = staticmeth
+          +od(_stub)                                                     
+      235  
+      236      pipeline.compute_pointmap = types.MethodType(compute_point
+           map, pipeline)
+      237      pipeline._mv_pending_intrinsics = pending
+
+● 好——本质是 out-dir 已建立，我无需在 venv 内也 patch，直接在 run_multi_view
+  前入队 K 并断言消费。加一个收尾安全检查，并重跑：
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 1 line
+      483              )
+      484  
+      485          logger.info("[mv] Running MV-SAM3D for '{}' over frame
+           s {}", prompt_id, used_frames)
+      486 +        n_queued = len(pipeline._mv_pending_intrinsics)       
+      487          with torch.no_grad():
+      488              result = pipeline.run_multi_view(
+      489                  view_images=images,
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 7 lines
+      502                  ss_warmup_steps=1,
+      503                  weighting_config=weighting_config,
+      504              )
+      505 +        leftover = len(pipeline._mv_pending_intrinsics)       
+      506 +        if leftover != n_queued - len(images):                
+      507 +            logger.warning(                                   
+      508 +                "[mv] intrinsics queue drift: queued {} views,
+          + {} leftover (expected {})",                                  
+      509 +                n_queued, leftover, n_queued - len(images),   
+      510 +            )                                                 
+      511 +            pipeline._mv_pending_intrinsics.clear()           
+      512  
+      513          mesh = result.get("glb")
+      514          if mesh is None:
+
+● Streaming response ended before any complete data was received. 
+  Retrying without streaming. If this keeps happening, check any proxy 
+  or gateway between Claude Code and your model provider.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 趁 uv sync，用现成的 .venv/bin/python 直接跑端到端（包是
+  editable，源码即时生效）:
+
+  Read 2 files, ran 1 shell command (ctrl+o to expand)
+
+● Background command "Sync and import-check multiview from obj_recon dir"
+completed (exit code 0)
+
+● Background command "Run MV-SAM3D after intrinsics patch" completed (exit code
+0)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 2 lines
+      204      _marker = "_mv_intrinsics_patched"
+      205      if getattr(pipeline, _marker, False):
+      206          return
+      207 +    logger.info("[mv] patching compute_pointmap to inject geom
+          +etry intrinsics (cls={})",                                    
+      208 +                type(pipeline).__name__)                      
+      209  
+      210      def compute_pointmap(self, image, pointmap=None):
+      211          self._mv_skip_infer = bool(pending)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 4 lines, removed 1 line
+      229  
+      230      def _stub(points, device=None):
+      231          if getattr(pipeline, "_mv_skip_infer", False) and pend
+           ing:
+      232 -            return {"intrinsics": pending.pop(0).to(device or 
+          -"cpu")}                                                       
+      232 +            intr = pending.pop(0).to(device or "cpu")         
+      233 +            logger.info("[mv]   injected geometry intrinsics (
+          +fx_norm={:.3f})", float(intr[0, 0]))                          
+      234 +            return {"intrinsics": intr}                       
+      235 +        logger.warning("[mv]   no queued intrinsics; falling b
+          +ack to MoGe recover_focal_shift")                             
+      236          return orig_infer(points, device=device)
+      237  
+      238      # Patch at class level so the wrapper's `orig` call also s
+           ees it.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 模型加载途中，查 select_keyframes 那个一次性 debug 的 grep：
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Background command "Re-run MV with debug logging" completed (exit code 0)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 2 lines
+      209  
+      210      def compute_pointmap(self, image, pointmap=None):
+      211          self._mv_skip_infer = bool(pending)
+      212 +        print(f"[mv debug] enter compute_pointmap pending={len
+          +(pending)}", flush=True)                                      
+      213          try:
+      214              return orig(self, image, pointmap=pointmap)
+      215          finally:
+      216 +            print(f"[mv debug] exit  compute_pointmap pending=
+          +{len(pending)}", flush=True)                                  
+      217              self._mv_skip_infer = False
+      218  
+      219      # Bypass the solver by monkeypatching the pipeline's modul
+           e-level helper:
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 3 lines, removed 2 lines
+      230          orig_infer = ipm.infer_intrinsics_from_pointmap
+      231  
+      232      def _stub(points, device=None):
+      233 -        if getattr(pipeline, "_mv_skip_infer", False) and pend
+          -ing:                                                          
+      233 +        active = getattr(pipeline, "_mv_skip_infer", False)   
+      234 +        print(f"[mv debug] _stub called skip={active} pending=
+          +{len(pending)}", flush=True)                                  
+      235 +        if active and pending:                                
+      236              intr = pending.pop(0).to(device or "cpu")
+      237              logger.info("[mv]   injected geometry intrinsics (
+           fx_norm={:.3f})", float(intr[0, 0]))
+      238              return {"intrinsics": intr}
+      237 -        logger.warning("[mv]   no queued intrinsics; falling b
+          -ack to MoGe recover_focal_shift")                             
+      239          return orig_infer(points, device=device)
+      240  
+      241      # Patch at class level so the wrapper's `orig` call also s
+           ees it.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 等它完成再看 debug print（这次一定有 stdout)。
+  Ran 1 shell command (ctrl+o to expand)
+
+● Background command "Run with explicit debug prints" completed (exit code 0)
+
+● _stub 从来不被调，因为类方法的调用解析不查类属性。直接 patch MV 模块的 global
+  —— 这是 compute_pointmap 裸调用真正解析的命名空间。修正：
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 8 lines, removed 9 lines
+      222      # (which NaNs on z+shift=0 for MoGe point maps). pop() con
+           sumes in order.
+      223      import sam3d_objects.pipeline.inference_pipeline_pointmap 
+           as ipm
+      224  
+      225 -    # MV calls `infer_intrinsics_from_pointmap` (module-scope 
+          -symbol inside                                                 
+      226 -    # inference_pipeline_pointmap); the class attribute is wha
+          -t `orig` resolves.                                            
+      227 -    if "infer_intrinsics_from_pointmap" in type(pipeline).__di
+          -ct__:                                                         
+      228 -        orig_infer = type(pipeline).infer_intrinsics_from_poin
+          -tmap                                                          
+      229 -    else:                                                     
+      230 -        orig_infer = ipm.infer_intrinsics_from_pointmap       
+      225 +    # compute_pointmap does a bare call ``infer_intrinsics_fro
+          +m_pointmap(...)``                                             
+      226 +    # inside pkgs/MV-SAM3D's inference_pipeline_pointmap modul
+          +e. Bare calls bind                                            
+      227 +    # via the module's globals ONLY (class attrs are not consu
+          +lted), so we patch                                            
+      228 +    # the module global — the only place that actually interce
+          +pts it.                                                       
+      229 +    import sam3d_objects.pipeline.inference_pipeline_pointmap 
+          +as ipm                                                        
+      230  
+      231 +    orig_infer = ipm.infer_intrinsics_from_pointmap           
+      232 +                                                              
+      233      def _stub(points, device=None):
+      234          active = getattr(pipeline, "_mv_skip_infer", False)
+      234 -        print(f"[mv debug] _stub called skip={active} pending=
+          -{len(pending)}", flush=True)                                  
+      235          if active and pending:
+      236              intr = pending.pop(0).to(device or "cpu")
+      237              logger.info("[mv]   injected geometry intrinsics (
+           fx_norm={:.3f})", float(intr[0, 0]))
+      238              return {"intrinsics": intr}
+      239          return orig_infer(points, device=device)
+      240  
+      241 -    # Patch at class level so the wrapper's `orig` call also s
+          -ees it.                                                       
+      242 -    type(pipeline).infer_intrinsics_from_pointmap = staticmeth
+          -od(_stub)                                                     
+      241 +    ipm.infer_intrinsics_from_pointmap = _stub                
+      242  
+      243      pipeline.compute_pointmap = types.MethodType(compute_point
+           map, pipeline)
+      244      pipeline._mv_pending_intrinsics = pending
+
+● Update(obj_recon/multiview.py)
+  ⎿  Error editing file
+
+● Update(obj_recon/multiview.py)
+  ⎿  Removed 2 lines
+      209  
+      210      def compute_pointmap(self, image, pointmap=None):
+      211          self._mv_skip_infer = bool(pending)
+      212 -        print(f"[mv debug] enter compute_pointmap pending={len
+          -(pending)}", flush=True)                                      
+      212          try:
+      213              return orig(self, image, pointmap=pointmap)
+      214          finally:
+      216 -            print(f"[mv debug] exit  compute_pointmap pending=
+          -{len(pending)}", flush=True)                                  
+      215              self._mv_skip_infer = False
+      216  
+      217      # Bypass the solver by monkeypatching the pipeline's modul
+           e-level helper:
+
+● 再跑：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 趁 30 秒模型加载+推理，等完成后再收尾（清理 debug + 文档 + 单测）。
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Background command "Run MV after patching module-global intrinsics" completed
+(exit code 0)
+
+● 两边内参都成功注入，跑通了！查看产物和 pose 数值：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● mesh、纹理、metric pose、view_poses 都出来了。视觉质检一下融合 mesh:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● canonical extents 和单帧几乎一致 — fusion 拿到的是同一 canonical mesh，更准的
+  pose。视觉验证：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 用之前 pose_est 的 EGL 渲染器环境预览：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 用 pose_est 里已有的 offscreen 渲染路径：
+
+  Thought for 1m 31s, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● mesh 形状/纹理正确（勺子清晰可见）。收尾：清掉 debug
+  改动，写单元测试，更新文档：
+
+● Update(obj_recon/multiview.py)
+  ⎿  Removed 2 lines
+      204      _marker = "_mv_intrinsics_patched"
+      205      if getattr(pipeline, _marker, False):
+      206          return
+      207 -    logger.info("[mv] patching compute_pointmap to inject geom
+          -etry intrinsics (cls={})",                                    
+      208 -                type(pipeline).__name__)                      
+      207  
+      208      def compute_pointmap(self, image, pointmap=None):
+      209          self._mv_skip_infer = bool(pending)
+
+● Update(obj_recon/multiview.py)
+  ⎿  Added 1 line, removed 1 line
+      165          if len(sel) < 2:
+      166              raise ValueError(
+      167                  f"manual keyframes must contain >=2 usable fra
+           mes, got {sel} "
+      168 -                f"(manual={list(manual)!r}, n_usable={len(all_
+          -indices)})"                                                   
+      168 +                f"(n_usable={len(all_indices)})"              
+      169              )
+      170          sel = sorted(sel, key=lambda i: order[i])  # preserve 
+           user order (view 0 first)
+      171      elif strategy == "ffprobe":
+
+● Write(tests/test_multiview.py)
+  ⎿  Wrote 60 lines to tests/test_multiview.py
+       1 """Unit tests for the MV-SAM3D keyframe selection helpers (no mo
+         del / CUDA)."""
+       2 
+       3 from __future__ import annotations
+       4 
+       6 
+       7 from obj_recon.multiview import _evenly_spaced, select_keyframes
+       8 
+       9 
+      10 class TestEvenlySpaced:
+     … +59 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 28/28 全过。收尾文档：
+
+● Update(README.md)
+  ⎿  Added 55 lines
+      135  uniform `scale`, `quat_wxyz`, plus a procrustes-aligned `new_q
+           uat` that maps
+      136  the mesh from its canonical Y-up frame to the ISAAC frame. Dow
+           nstream stages
+      137  (guided pose tracking, scene export) read these files.
+      138 +                                                              
+      139 +## Multi-view mode (MV-SAM3D)                                 
+      140 +                                                              
+      141 +`--mv.enabled` switches to MV-SAM3D (vendored at `pkgs/MV-SAM3
+          +D`): instead of a                                             
+      142 +single-view reconstruction it fuses several keyframes into **o
+          +ne** mesh per                                                 
+      143 +object with entropy-weighted attention fusion — generally a mo
+          +re faithful mesh                                              
+      144 +and pose than any single view. It reuses the **same** `geometr
+          +y` stage point                                                
+      145 +maps (no DA3 / Depth-Anything-3 dependency).                  
+      146 +                                                              
+      147 +```bash                                                       
+      148 +# default strategy: 4 evenly-spaced keyframes                 
+      149 +obj_recon/.venv/bin/python -m obj_recon.cli \                 
+      150 +  --masks-json outputs/yellow_spoon/segment/masks.json \      
+      151 +  --geometry-json outputs/yellow_spoon/geometry/geometry.json 
+          +\                                                             
+      152 +  --mv.enabled                                                
+      153 +                                                              
+      154 +# pick keyframes by hand (first = view-0 reference pose); NOTE
+          +: repeat the                                                  
+      155 +# values under ONE flag, not the flag itself — tyro keeps only
+          + the last                                                     
+      156 +# occurrence of a repeated list flag.                         
+      157 +obj_recon/.venv/bin/python -m obj_recon.cli \                 
+      158 +  --masks-json outputs/yellow_spoon/segment/masks.json \      
+      159 +  --geometry-json outputs/yellow_spoon/geometry/geometry.json 
+          +\                                                             
+      160 +  --mv.enabled --mv.keyframe-strategy manual --frame-index 0 4
+          +4 88                                                          
+      161 +                                                              
+      162 +# ffprobe scene/I-frames as keyframes (falls back to even spac
+          +ing)                                                          
+      163 +  --mv.enabled --mv.keyframe-strategy ffprobe --mv.keyframe-vi
+          +deo inputs/yellow_spoon.mp4                                   
+      164 +```                                                           
+      165 +                                                              
+      166 +Options (all under `--mv.*`): `keyframe-strategy` (`even`|`man
+          +ual`|`ffprobe`),                                              
+      167 +`num-views` (default 4), `max-views-cap` (default 8), `seed`, 
+          +weighting knobs.                                              
+      168 +Use `--recon.with-texture-baking=true` for the textured GLB.  
+      169 +                                                              
+      170 +Both modes share the camera / intrinsics convention: geometry 
+          +supplies MoGe                                                 
+      171 +point maps + intrinsics; MV-SAM3D's external-pointmap branch w
+          +ould otherwise                                                
+      172 +discard the known intrinsics and re-run MoGe's `recover_focal_
+          +shift`, which                                                 
+      173 +NaNs on MoGe's own point maps, so `multiview.py` injects the g
+          +eometry                                                       
+      174 +intrinsics per view (checked by `tests/test_multiview.py`-adja
+          +cent behavior).                                               
+      175 +                                                              
+      176 +### Outputs                                                   
+      177 +                                                              
+      178 +One folder per object under `meshes/mv/<object>/`:            
+      179 +                                                              
+      180 +```                                                           
+      181 +meshes/mv/yellow_spoon/                                       
+      182 +├── yellow_spoon.glb        # fused, textured canonical mesh  
+      183 +├── yellow_spoon.obj + material_0.png                         
+      184 +├── view_poses.json         # view-0 reference pose (+ per-vie
+          +w poses when reported)                                        
+      185 +└── layout.json             # view-0 metric pose — same schema
+          + pose_estimation consumes                                     
+      186 +```                                                           
+      187 +                                                              
+      188 +`meshes/mv/<object>/layout.json` is intentionally **schema-com
+          +patible** with                                                
+      189 +the single-frame `layout.json`, so `pose_estimation --mesh-pat
+          +h                                                             
+      190 +outputs/<clip>/obj_recon/meshes/mv/yellow_spoon/yellow_spoon.o
+          +bj` consumes the                                              
+      191 +fused mesh + scale exactly as before; intermediate keyframe po
+          +ses are then                                                  
+      192 +filled by pose_estimation's tracking.                         
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/cli.md)
+  ⎿  Added 9 lines
+       9  
+      10  obj_recon/.venv/bin/python -m obj_recon.cli --masks-json output
+          s/yellow_spoon/segment/masks.json --geometry-json outputs/yello
+          w_spoon/geometry/geometry.json
+      11  
+      12 +# Alternative: multi-view (MV-SAM3D). Fuses keyframes into ONE 
+         +mesh per object                                                
+      13 +# + a view-0 metric pose. Default = 4 evenly-spaced keyframes. 
+         +Repeat the values                                              
+      14 +# under ONE --frame-index flag (tyro keeps only the last repeat
+         +ed flag).                                                      
+      15 +# obj_recon/.venv/bin/python -m obj_recon.cli --masks-json outp
+         +uts/yellow_spoon/segment/masks.json --geometry-json outputs/yel
+         +low_spoon/geometry/geometry.json --mv.enabled                  
+      16 +# obj_recon/.venv/bin/python -m obj_recon.cli --masks-json outp
+         +uts/yellow_spoon/segment/masks.json --geometry-json outputs/yel
+         +low_spoon/geometry/geometry.json --mv.enabled --mv.keyframe-str
+         +ategy manual --frame-index 0 44 88                             
+      17 +                                                               
+      18  pose_estimation/.venv/bin/python -m pose_estimation.cli --frame
+          s-json outputs/yellow_spoon/process/frames.json --masks-json ou
+          tputs/yellow_spoon/segment/masks.json --mesh-path outputs/yello
+          w_spoon/obj_recon/meshes/000000/yellow_spoon/yellow_spoon.obj -
+          -init-frame 0 --vis
+      19 +# Multi-view note: same --mesh-path schema works for the MV out
+         +put — point it at                                              
+      20 +# outputs/yellow_spoon/obj_recon/meshes/mv/yellow_spoon/yellow_
+         +spoon.obj (the                                                 
+      21 +# sibling layout.json carries the metric scale).               
+      22  
+      23  scene_construction/.venv/bin/python -m scene_construction.cli -
+          -clip-root outputs/yellow_spoon
+      24  
+
+● 最终回归：单测 + 单帧路径不受影响 + MV e2e 再跑一遍交差：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 全绿。写入持久记忆并总结：
+  Recalled 1 memory, wrote 2 memories (ctrl+o to expand)
+
+● 全部完成。最终 RTX 5090 端到端跑通，28 单测过，单帧路径无回归。
+
+  接入结论
+
+  ┌───────────────────┬─────────────────────────────────────────────────────┐
+  │     你的预期      │                        结果                         │
+  ├───────────────────┼─────────────────────────────────────────────────────┤
+  │                   │ 不能——MV-SAM3D 的 pyproject.toml                    │
+  │ 能 pip+git 装最好 │ name=sam3d_objects，和上游同 project 名 + 同        │
+  │                   │ top-level 包，且 requirements 硬钉 torch            │
+  │                   │ 2.5.1+cu121 / kaolin 0.17（与 RTX 5090 cu128 冲突） │
+  ├───────────────────┼─────────────────────────────────────────────────────┤
+  │                   │ 已作为 pkgs/MV-SAM3D submodule(URL                  │
+  │ 不能就作为子包    │ github.com/devinli123/MV-SAM3D)。uv source          │
+  │                   │ 直接指向它（superset 上游，单帧行为不变）；原       │
+  │                   │ pkgs/sam-3d-objects 保留作 diff 参考                │
+  ├───────────────────┼─────────────────────────────────────────────────────┤
+  │ 给 obj_recon      │ --mv.enabled + --mv.keyframe-strategy +             │
+  │ 加多视角参数      │ --mv.num-views/max-views-cap/…                      │
+  ├───────────────────┼─────────────────────────────────────────────────────┤
+  │                   │ MV 输出 view-0 metric pose 的 layout.json(schema    │
+  │ 间隔帧 pose 交给  │ 与单帧一致），--mesh-path 改指                      │
+  │ pose_estimation   │ meshes/mv/<obj>/<obj>.obj 即被 pose_estimation      │
+  │                   │ 正常消费                                            │
+  ├───────────────────┼─────────────────────────────────────────────────────┤
+  │ 深度直接用        │ 成立：view_pointmaps 吃 geometry 的 MoGe            │
+  │ geometry 输出     │ points.npy（同一 OpenCV 约定）,不依赖 DA3           │
+  └───────────────────┴─────────────────────────────────────────────────────┘
+
+  改动
+
+  - .gitmodules + pkgs/MV-SAM3D submodule
+  - obj_recon/pyproject.toml:sam3d_objects source 指向 MV checkout（复用既有
+    override 矩阵）
+  - obj_recon/obj_recon/multiview.py 新模块：MultiViewArgs + keyframe
+    选择（even/manual/ffprobe)+ reconstruct_multiview
+  - obj_recon/obj_recon/cli.py：分支 --mv.enabled
+  - 测试：tests/test_multiview.py(11 个）;28/28 全过
+  - 文档：obj_recon/README.md（新多视角章节）、cli.md（加了 MV 行 + tyro list
+    flag 注意事项）
+
+  关键技术点
+
+  1. intrinsics 注入（最多坑的一坑）:MV 外部点图分支丢弃内参重新用 MoGe
+     recover_focal_shift 推断，在 MoGe 自己的点图上 z+shift=0 → NaN。MV
+     源码里是裸全局函数调用，所以用模块级 
+     monkey-patch（类属性/方法包装拦不到）注入 geometry 的已知内参。
+  2. tyro list flag:--frame-index 0 --frame-index 44 只留 [44]；要 --frame-index
+     0 44 88(cli.md/README 已注明）。
+  3. MV checkout 里 all_view_poses_raw 实际没被填，只有 view-0 ref
+     pose——符合"间隔帧由 pose_estimation 补全"的设计。
+
+  验证结果（yellow_spoon, keyframes [0,44])
+
+  - 纹理 mesh + material_0.png 正常；canonical extents [0.18, 0.14, 1.0]
+    与单帧一致
+  - view-0 metric pose: scale 0.146（单帧两次 0.133/0.155，波动更小）
+  - 渲染图确认勺子形状正确（上面预览）
+
+✻ Cooked for 1h 48m 28s

@@ -1,0 +1,2215 @@
+╭─── Claude Code v2.1.241 ─────────────────────────────────────────────────────╮
+│                                               │ Tips for getting started     │
+│                 Welcome back!                 │ Run /init to create a CLAUD… │
+│                                               │ ──────────────────────────── │
+│                    ▐▛███▛█                    │ What's new                   │
+│                   ▝▜██████▀                   │ Bug fixes and reliability i… │
+│                     ▝▝ ▝▝                     │ Bug fixes and reliability i… │
+│                                               │ Cost estimates (`/cost`, st… │
+│          kimi-k3 · API Usage Billing          │ /release-notes for more      │
+│   /…/v2r/v2s2a_pipeline/pkgs/sam-3d-objects   │                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ ╭─── Claude Code v2.1.241                                                     
+  ─────────────────────────────────────────────────────╮                        
+  │                                                   │ Tips for getting        
+  started │                                                                     
+  │                   Welcome back!                   │ Run /init to create a   
+  C… │                                                                          
+  │                                                   │                         
+  ──────────────────────── │                                                    
+  │                      ▐▛███▛█                      │ What's new              
+   │                                                                            
+  │                     ▝▜██████▀                     │ Bug fixes and           
+  reliabili… │                                                                  
+  │                       ▝▝ ▝▝                       │ Bug fixes and           
+  reliabili… │                                                                  
+  │                                                   │ Cost estimates          
+  (`/cost`… │                                                                   
+  │         ox-alpha-free · API Usage Billing         │ /release-notes for more 
+   │                                                                            
+  │   /mnt/workspace/human-robot/v2r/v2s2a_pipeline   │                         
+   │                                                                            
+  ╰──────────────────────────────────────────────────────────────────────────── 
+  ──╯                                                                           
+                                                                                
+                                                                                
+  ❯ @2026-08-24-144449-claude-code-v21241.txt                                   
+                                                                                
+    继续未完成的任务                                                            
+                                                                                
+    ⎿  Read 2026-08-24-144449-claude-code-v21241.txt (1129 lines)               
+                                                                                
+    Thought for 59s (ctrl+o to expand)                                          
+                                                                                
+  ● 我先看一下上次会话中断时的代码现状，确认哪些改动已落盘、哪些还没完成。      
+                                                                                
+    Thought for 25s, read 1 file, ran 1 shell command (ctrl+o to expand)        
+                                                                                
+  ● 上次会话中断在「修好 vis 调用后重跑」这一步。我先确认 save_pose_overlay     
+    的签名匹配、测试是否通过，以及上一次后台重跑有没有产出。                    
+                                                                                
+    Thought for 1m 8s, read 1 file, listed 1 directory, ran 1 shell command     
+  (ctrl+o to expand)                                                            
+                                                                                
+  ● 上一次跑完了，但结果可疑：89 帧里只有 register(1) +                         
+  track-backward(28)，init                                                      
+    帧之后的前向帧全部 skipped（60 帧）。我查一下原因。                         
+                                                                                
+    Thought for 55s, ran 1 shell command (ctrl+o to expand)                     
+                                                                                
+  ● 前向帧 29–88 全部 skipped 的原因是 geometry stage 只覆盖了 0–28             
+    帧（geometry.json 只有 29 条），不是 pose_estimation 的 bug。反向跟踪 0–27  
+    正常。我再验证两件事：反向位姿的数学是否正确（set_pose(inv(T)) +            
+    再取逆这套逻辑），以及 vis 叠加图是否合理。                                 
+                                                                                
+    Read 2 files (ctrl+o to expand)                                             
+    ⎿  Interrupted · What should Claude do instead?                             
+                                                                                
+  ❯ 你要注意 @geometry/ 应该只会跑单帧, 其他的依靠 @pose_estimation/ 补充,      
+                                                                                
+    如果效果很差, @geometry/ 才会跑全帧, 中间还有一个强约束是物体的大小不会变   
+                                                                                
+    ⎿  Listed directory geometry/                                               
+    ⎿  Listed directory pose_estimation/                                        
+                                                                                
+    Thought for 3m 11s (ctrl+o to expand)                                       
+                                                                                
+  ● 明白了 — 这是流水线的关键设计约束，我先记下来，再看现状与目标的差距：       
+                                                                                
+    - geometry 默认只跑单帧（init 帧），供注册用                                
+    - 其余帧的深度由 pose_estimation 自己补（不能因为没有 geometry 深度就       
+  skip）                                                                        
+    - 只有效果差时 geometry 才回退到全帧                                        
+    - 强约束：物体尺寸恒定（mesh 与深度之间的尺度要一致，且不随帧变化）         
+                                                                                
+    我先确认 geometry 是否支持单帧模式，以及 FoundationPose 的 track 对 depth   
+    的依赖程度（决定无深度帧怎么跟踪）。                                        
+                                                                                
+    Thought for 4m 43s, searched for 2 patterns, read 1 file, listed 1          
+  directory, ran 3 shell commands (ctrl+o to expand)                            
+                                                                                
+  ● FoundationPose 的 track_one 硬依赖每帧 depth（用 depth 构建 xyz_map 给      
+    refiner）。所以设计意图是：没有 geometry 的帧，用 mesh 在上一帧位姿处渲染出 
+                                                                                
+    depth 喂给 tracker — 物体尺寸恒定（mesh                                     
+  固定），渲染深度天然尺度一致。我先看                                          
+    geometry 单帧输出格式和 FoundationPose 可复用的渲染器。                     
+                                                                                
+    Thought for 4m 41s, searched for 2 patterns (ctrl+o to expand)              
+                                                                                
+  ● 继续。我已经确认了关键事实，现在把发现和计划整理出来：                      
+                                                                                
+    现状与目标的差距（对照你说的约束）：                                        
+                                                                                
+    1. geometry 单帧 — geometry 包已有 --command single                         
+  模式，但流水线目前跑的是                                                      
+       video 模式（只覆盖 0–28 帧，这也是上轮 60 帧 skipped 的直接原因）。      
+    2. pose_estimation 依赖每帧 geometry 深度 — FoundationPose 的 track_one     
+  硬依赖                                                                        
+       depth（构建 xyz_map 喂 refiner）。按你的设计，无 geometry 的帧应该用     
+  mesh                                                                          
+       在上一帧位姿处渲染 depth 来喂 tracker（mesh 固定 →                       
+  尺寸恒定约束自动满足）。                                                      
+    3. 发现一个反向跟踪的真 bug — workflow.py:422 把 backward estimator         
+  种子设成了                                                                    
+       inv(T_init)，再对结果取逆。这是错的：inv(T) 是                           
+       cam_in_obj，不是“上一帧的位姿”。FoundationPose 的 tracker                
+       不感知时间方向，正确的反向跟踪是：用 T_init 直接做种子，按 init-1,       
+  init-2,                                                                       
+       ... 顺序逐帧 track，结果不取逆。                                         
+                                                                                
+    Thought for 1m 17s, ran 1 shell command (ctrl+o to expand)                  
+                                                                                
+  ● ModelRendererOffscreen.render() 可用（给 mesh + ob_in_cvcam，返回           
+    depth）。再看一下 estimator docstring 里提到的 do-as-i-do                   
+    参考实现是怎么处理无深度跟踪的：                                            
+                                                                                
+    Searched for 2 patterns (ctrl+o to expand)                                  
+    ⎿  Interrupted · What should Claude do instead?                             
+                                                                                
+  ❯ FoundationPose 的 track_one 硬依赖每帧 depth（用 depth 构建 xyz_map 给      
+                                                                                
+    我说错了, 如果依赖深度, 那就默认 @geometry/ 跑全帧, 之后 @obj_recon/        
+                                                                                
+    默认只跑单帧,                                                               
+                                                                                
+    ⎿  Listed directory geometry/                                               
+    ⎿  Listed directory obj_recon/                                              
+                                                                                
+    Thought for 1m 33s (ctrl+o to expand)                                       
+                                                                                
+  ● 明白，修正设计理解：                                                        
+                                                                                
+    - geometry 默认跑全帧（因为 FoundationPose track 需要每帧深度）             
+    - obj_recon 默认只跑单帧（init 帧出 mesh）                                  
+    - 物体尺寸恒定的强约束由「固定 mesh + 逐帧深度」保证                        
+                                                                                
+    那么上一轮 60 帧 skipped 的根因就是 geometry 没跑全（只有 0–28              
+    帧）。调整任务：                                                            
+    ⎿  Interrupted · What should Claude do instead?                             
+  继续                                                                          
+  ⎿  Listed directory geometry/
+  ⎿  Listed directory pose_estimation/
+  ⎿  Listed directory obj_recon/
+  ⎿  ⧉ Selected 1 lines from 
+     ../../../../../home/yongce/workspace/human-robot/v2r/v2s2a_pipeline/cli.md 
+     in Visual Studio Code
+
+  Thought for 2m 27s (ctrl+o to expand)
+
+● 继续。基于修正后的设计理解，我确认一下当前代码状态，然后落实三件事：
+
+  1. 修反向跟踪 bug（workflow.py:422，inv(T_init) 种子 + 结果取逆是错的）
+  2. geometry 默认跑全帧（FoundationPose track 依赖每帧深度）
+  3. obj_recon 默认单帧（init 帧出 mesh，尺寸恒定约束由固定 mesh 保证）
+
+  先看现状：
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● 确认了 workflow.py:422 的 bug 还在。我查一下反向 track 时方向标志的用途和
+  estimator 的时间感知，确认修法：
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● 时间反演的假设是错的——FoundationPose 的 tracker
+  是逐帧刚性跟踪，不感知时间方向。inv(T) 是
+  cam_in_obj，不是什么"反向步进位姿"。正确做法：直接用 T_init 种子，按 init-1,
+  init-2, … 顺序逐帧 track，不取逆。
+
+  修复这两处：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 8 lines, removed 10 lines
+      308              return _skipped_entry(frame)
+      309          rgb, depth, intrinsics = inputs
+      310  
+      311 -        if backwards:                                         
+      312 -            # Time inversion: F_B->A = inv(F_A->B). The backwa
+          -rd estimator was                                              
+      313 -            # seeded with inv(T_init) (the reversed-step initi
+          -al pose); tracking                                            
+      314 -            # forward through the reversed sequence yields inv
+          -(T_t), so invert                                              
+      315 -            # back before writing the pose.                   
+      316 -            pose = np.linalg.inv(                             
+      317 -                np.asarray(self.estimator.track(rgb=rgb, depth
+          -=depth, intrinsics=intrinsics))                               
+      318 -            )                                                 
+      319 -        else:                                                 
+      320 -            pose = self.estimator.track(rgb=rgb, depth=depth, 
+          -intrinsics=intrinsics)                                        
+      311 +        # The tracker is a per-frame rigid tracker with no not
+          +ion of time                                                   
+      312 +        # direction: given the previous pose it refines agains
+          +t the current                                                 
+      313 +        # frame. Backward tracking is therefore identical to f
+          +orward tracking —                                             
+      314 +        # the estimator was seeded with T_init and steps throu
+          +gh                                                            
+      315 +        # init-1, init-2, ...; no inversion anywhere.         
+      316 +        pose = np.asarray(                                    
+      317 +            self.estimator.track(rgb=rgb, depth=depth, intrins
+          +ics=intrinsics)                                               
+      318 +        )                                                     
+      319  
+      320          # Corner case: overlapping symmetric silhouettes can m
+           ake both branches
+      321          # converge nominally; the manifest records direction s
+           o downstream can
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 3 lines, removed 1 line
+      412          entries.append(entry)
+      413  
+      414      # Back-propagate from the registered pose to frames before
+            the init frame.
+      415 +    # A separate estimator keeps the forward chain's state int
+          +act; it is seeded                                             
+      416 +    # with T_init as-is and steps backward frame by frame (ini
+          +t-1, init-2, ...).                                            
+      417      if backward_frames and register_entry.tracked:
+      418          registered_pose = np.loadtxt(poses_dir / register_entr
+           y.pose_filename).reshape(
+      419              4, 4
+      420          )
+      421          backward_estimator = FoundationPoseEstimator(mesh, arg
+           s.foundationpose)
+      420 -        backward_estimator.set_pose(np.linalg.inv(registered_p
+          -ose))                                                         
+      422 +        backward_estimator.set_pose(registered_pose)          
+      423          backward_processor = _FrameProcessor(
+      424              args, backward_estimator, geometry_manifest, masks
+           _manifest, poses_dir, vis_dir
+      425          )
+
+● 现在确认 geometry 全帧与 obj_recon 单帧的默认是否符合设计。查 geometry
+  全帧的入口和 obj_recon 的默认帧数：
+
+  Thought for 17s, searched for 6 patterns, read 1 file, listed 1 directory, ran 4 shell commands (ctrl+o to expand)
+
+● 没有针对反向跟踪数学的测试。跑一下现有 pose 测试确认修复不破坏既有行为：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 13 个测试全过。现在落实「geometry 全帧」——重跑 geometry 到全部 89
+  帧。先确认可用的运行入口（.venv 是否装好、上次怎么跑的）：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 确认是 --max-frames 29 截断导致的（89 帧只跑了 0–28）。现在跑全帧（去掉
+  max-frames）。这一步比较耗时，放后台：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 后台跑 geometry 全帧（89 帧，需一会儿）。期间落实「obj_recon
+  默认单帧」。当前默认是跑全部帧，按设计应默认只跑 init 帧。先看
+  reconstruct_video 的帧选择逻辑：
+
+  Searched for 1 pattern, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Background command "Run geometry on all 89 frames (background)" completed
+(exit code 0)
+
+● init_frame=28（所以注册帧是 28）。geometry 全帧跑完了，验证覆盖率：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● geometry 现在覆盖全部 89 帧（0–88）。（=== 是 zsh
+  解析问题，用引号重跑计数确认。）
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● geometry 全帧完成（0–88）。现在落实 obj_recon 默认单帧。改动默认：frame_index
+  未指定时默认 [28]（init 帧），并在 CLI 明确说明「尺寸恒定约束 → 单帧 mesh」。
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/obj_recon/obj_recon/cli.p
+        y)
+  ⎿  Added 8 lines, removed 1 line
+      58      """Limit the number of frames processed (useful for smoke t
+          ests)."""
+      59  
+      60      frame_index: list[int] | None = None
+      61 -    """Process only these frame indices. Repeat to select multi
+         -ple frames."""                                                 
+      61 +    """Process only these frame indices. Repeat to select multi
+         +ple frames.                                                    
+      62  
+      63 +    Defaults to the single registration/init frame (``[28]``). 
+         +Because the                                                    
+      64 +    rigid object's size never changes, one frame's mesh is suff
+         +icient —                                                       
+      65 +    pose_estimation then tracks that fixed mesh every frame (th
+         +e mesh supplies                                                
+      66 +    metric scale; per-frame geometry depth drives the tracker).
+         + Pass explicit                                                 
+      67 +    indices (or use ``--max-frames``) only to reconstruct more 
+         +frames, e.g. for                                               
+      68 +    debugging or when single-frame quality is poor."""         
+      69 +                                                               
+      70      skip_existing: bool = False
+      71      """Skip frames whose ``layout.json`` already exists in the 
+          output dir."""
+      72  
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/obj_recon/obj_recon/cli.p
+        y)
+  ⎿  Added 5 lines, removed 1 line
+      77  def main() -> None:
+      78      args = tyro.cli(ObjReconCliArgs)
+      79  
+      80 +    # Single-frame by default: the object is rigid, so one fram
+         +e's mesh fixes                                                 
+      81 +    # its (constant) size; the other frames only need poses, no
+         +t new meshes.                                                  
+      82 +    frame_indices = args.frame_index if args.frame_index else [
+         +DEFAULT_INIT_FRAME]                                            
+      83 +                                                               
+      84      outputs = reconstruct_video(
+      85          args.masks_json,
+      86          geometry_json=args.geometry_json,
+     ...
+      88          output_root=args.output_root,
+      89          prompt_ids=args.prompt_id,
+      90          max_frames=args.max_frames,
+      87 -        frame_indices=args.frame_index,                        
+      91 +        frame_indices=frame_indices,                           
+      92          skip_existing=args.skip_existing,
+      93          args=args.recon,
+      94      )
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/obj_recon/obj_recon/cli.p
+        y)
+  ⎿  Added 3 lines
+      28  
+      29  from obj_recon.reconstruct import MeshReconArgs, reconstruct_vi
+          deo
+      30  
+      31 +# Registration/init frame shared with pose_estimation's ``--ini
+         +t-frame``.                                                     
+      32 +DEFAULT_INIT_FRAME = 28                                        
+      33  
+      34 +                                                               
+      35  @dataclass
+      36  class ObjReconCliArgs:
+      37      """Reconstruct meshes from segment masks and geometry point
+           maps."""
+
+● 现在用全帧 geometry + 修复后的反向跟踪重跑 pose_estimation。先确认 CLI
+  参数名：
+  Searched for 2 patterns, read 1 file, listed 1 directory (ctrl+o to expand)
+
+● obj_recon 已有 000028 mesh；cli.md 第 10 行的 --frame-index 0 与 init-frame 28
+  不一致，更正为默认单帧：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/cli.md)
+  ⎿  Added 1 line, removed 1 line
+       7  
+       8  geometry/.venv/bin/python -m geometry.cli --command video --vid
+          eo.frames-json outputs/yellow_spoon/process/frames.json
+       9  
+      10 -obj_recon/.venv/bin/python -m obj_recon.cli --masks-json output
+         -s/yellow_spoon/segment/masks.json --geometry-json outputs/yello
+         -w_spoon/geometry/geometry.json --frame-index 0                 
+      10 +obj_recon/.venv/bin/python -m obj_recon.cli --masks-json output
+         +s/yellow_spoon/segment/masks.json --geometry-json outputs/yello
+         +w_spoon/geometry/geometry.json                                 
+      11  
+      12  pose_estimation/.venv/bin/python -m pose_estimation.cli \
+      13    --frames-json outputs/yellow_spoon/process/frames.json \
+
+● 现在重跑 pose_estimation（全帧 geometry + 修复后的反向跟踪），后台执行：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 后台跑 pose_estimation 期间，验证 obj_recon 的改动（CLI import/语法 +
+  测试）。obj_recon venv 用了特殊依赖矩阵，谨慎操作：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Background command "Rerun pose_estimation full frames with fixed backward
+tracking" completed (exit code 0)
+
+● pose_estimation 跑完了，看结果：
+
+  Read 1 file (ctrl+o to expand)
+
+● tracked=89/89 — 全部帧都成功了（对比上次 register 1 + backward 28 + skipped
+  60）。验证位姿序列的连续性，确认修复有效：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 结果很好：
+  - 89/89 tracked（register 1 + forward 60 + backward 28）
+  - 中位步长 0.018 m，init 边界（27→28→29）平滑连续 —— 反向跟踪修复有效
+  - 最大跳变 0.199 m 在 frame 80，可能是快速运动或跟踪漂移，后续可用 vis
+    叠加图检查
+
+  不过我注意到 obj_recon/cli.py 的 DEFAULT_INIT_FRAME 现在磁盘上是 0，不是我写的
+  28。让我看当前完整状态：
+
+  Read 1 file (ctrl+o to expand)
+
+● DEFAULT_INIT_FRAME = 0 与 docstring 里的 [28] 以及 pose 的 --init-frame 28
+  不一致。我之前设的是 28。
+
+  不过更根本的问题是：硬编码任何一个帧号都不对 —— init
+  帧是运行参数（黄色勺子这次用 28，换片段就变）。obj_recon 的默认单帧应该与 pose
+  的 init 帧对齐，而不是各自硬编码。正确做法是默认从 pose_estimation 的 config
+  读 init_frame，而不是猜一个数字。
+
+  我先确认 pose config 是否落了 init_frame，再决定怎么对齐：
+
+  Ran 2 shell commands (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ 默认是0 @../pose_estimation/ 自动取决是不是需要逆向跟踪                       
+  ⎿  Listed directory ../pose_estimation/
+
+● 明白了，两点都清楚了：
+
+  1. init_frame 默认 0（obj_recon 单帧就用第 0 帧，保持现状 DEFAULT_INIT_FRAME =
+     0）
+  2. pose_estimation 应根据 init_frame 自动决定是否需要逆向跟踪 —— init_frame=0
+     时没有更前的帧，跳过 backward pass 并说明
+
+  先修正 obj_recon 的 docstring 不一致（写的是 [28] 但默认是 0）：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/obj_recon/obj_recon/cli.p
+        y)
+  ⎿  Added 1 line, removed 1 line
+      63      frame_index: list[int] | None = None
+      64      """Process only these frame indices. Repeat to select multi
+          ple frames.
+      65  
+      66 -    Defaults to the single registration/init frame (``[28]``). 
+         -Because the                                                    
+      66 +    Defaults to the single registration/init frame (``[0]``). B
+         +ecause the                                                     
+      67      rigid object's size never changes, one frame's mesh is suff
+          icient —
+      68      pose_estimation then tracks that fixed mesh every frame (th
+          e mesh supplies
+      69      metric scale; per-frame geometry depth drives the tracker).
+           Pass explicit
+
+● Now the pose_estimation auto-skip of backward tracking when init_frame=0:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 12 lines, removed 3 lines
+      412          entries.append(entry)
+      413  
+      414      # Back-propagate from the registered pose to frames before
+            the init frame.
+      415 -    # A separate estimator keeps the forward chain's state int
+          -act; it is seeded                                             
+      416 -    # with T_init as-is and steps backward frame by frame (ini
+          -t-1, init-2, ...).                                            
+      417 -    if backward_frames and register_entry.tracked:            
+      415 +    # Backward tracking is only needed when init_frame > 0 (i.
+          +e. there are                                                  
+      416 +    # earlier frames); with the default init_frame=0 there is 
+          +nothing to                                                    
+      417 +    # back-propagate to, so the whole pass is skipped.        
+      418 +    if not backward_frames:                                   
+      419 +        logger.info(                                          
+      420 +            "[pose] init_frame={} is the first selected frame:
+          + no backward tracking needed",                                
+      421 +            args.init_frame,                                  
+      422 +        )                                                     
+      423 +    elif register_entry.tracked:                              
+      424 +        # A separate estimator keeps the forward chain's state
+          + intact; it is                                                
+      425 +        # seeded with T_init as-is and steps backward frame by
+          + frame                                                        
+      426 +        # (init-1, init-2, ...).                              
+      427          registered_pose = np.loadtxt(poses_dir / register_entr
+           y.pose_filename).reshape(
+      428              4, 4
+      429          )
+
+● Now change the default poses --init-frame from 28 to 0 in cli.md, and run the
+  tests to verify nothing broke:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/cli.md)
+  ⎿  Added 2 lines, removed 2 lines
+      12  pose_estimation/.venv/bin/python -m pose_estimation.cli \
+      13    --frames-json outputs/yellow_spoon/process/frames.json \
+      14    --masks-json outputs/yellow_spoon/segment/masks.json \
+      15 -  --mesh-path outputs/yellow_spoon/obj_recon/meshes/000028/yell
+         -ow_spoon/yellow_spoon.obj \                                    
+      16 -  --init-frame 28                                              
+      15 +  --mesh-path outputs/yellow_spoon/obj_recon/meshes/000000/yell
+         +ow_spoon/yellow_spoon.obj \                                    
+      16 +  --init-frame 0                                               
+      17  ```
+      18   No newline at end of file
+
+  Listed 1 directory (ctrl+o to expand)
+
+● 000000 mesh 存在，cli.md 已对齐 init_frame=0。运行 pose 测试确认改动：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 13 个测试全过。验证 obj_recon 在默认单帧（frame
+  0）下的端到端行为——因为它已经跑过 000000，用 --skip-existing 确认默认选中
+  frame 0：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● obj_recon 默认单帧（frame 0）worked：processed=0/1 frames + SKIP（000000 已有
+  mesh）。默认单帧逻辑正确。
+
+  全部三块已按你的修正落地并验证：
+
+  改动总结
+
+  1. pose_estimation — 修反向跟踪 bug（workflow.py）
+  - 之前错误地把 backward estimator 种子设成
+    inv(T_init)、结果再取逆（基于「时间反演」的错误假设）
+  - FoundationPose tracker 是逐帧刚性跟踪、不感知方向。修复：种子直接用
+    T_init，按 init-1, init-2, … 逐帧 track，不取逆
+
+  2. pose_estimation — 自动决定是否需要逆向跟踪
+  - init_frame=0（默认）时没有更前的帧 → 跳过 backward pass 并 log 说明
+  - init_frame>0 时才执行 back-propagate
+
+  3. obj_recon — 默认单帧（cli.py）
+  - 尺寸恒定约束 → 一个 mesh 固定物体大小，其余帧只需要 pose
+  - 默认 frame_index=[0]；要跑多帧时显式传 --frame-index
+
+  4. geometry 默认全帧 — FoundationPose track 依赖每帧深度，已补跑全 89 帧
+
+  5. cli.md — obj_recon 去掉 --frame-index 0（现在是默认）、pose 对齐
+  --init-frame 0 + 000000 mesh
+
+  验证结果
+
+  - pose_estimation 重跑：89/89 tracked（上次是 register 1 + backward 28 +
+    skipped 60）
+  - 位姿连续：中位步长 0.018 m，init 边界平滑；最大跳变 0.199 m 在 frame
+    80（可用 vis 检查是否跟踪漂移）
+  - pose 13 个测试全过；obj_recon 默认单帧行为正确
+
+  frame 80 的 0.199 m 跳变值得用 vis 叠加图确认一下是真运动还是 drift ——
+  你要我生成 vis 看看吗？
+
+✻ Brewed for 2m 31s
+
+❯ 需要生成vis 之后更新命令行在 @cli.md                                          
+  ⎿  Read cli.md (17 lines)
+
+● 对，生成 vis 然后更新 cli.md。先查 pose CLI 的 vis 标志及是否有独立 vis 入口：
+
+  Searched for 1 pattern (ctrl+o to expand)
+● vis 标志在 workflow 里是 --vis（字段 vis: bool），tyro 转成 --vis。我用
+  init_frame=0 + --vis 重跑生成叠加图，放后台：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 等待期间，我确认一下 cwd（后台命令的相对路径是否解析正确）：
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● Background command "Rerun pose_estimation with --vis and init_frame=0"
+completed (exit code 0)
+
+● - init_frame=0：backward pass 正确跳过（log 确认）
+  - 89/89 tracked，89 张 vis 叠加图生成
+
+  抽查几张叠加图，重点看 frame 80（之前的 0.199 m 跳变）：
+
+  Read 1 file (ctrl+o to expand)
+
+● bbox 渲染异常（两条横贯全屏的横线，没有竖边），不像正常的 2D 框。先看
+  save_pose_overlay 的实现，再多看几帧：
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ 应该是直接读取outputs/yellow_spoon/obj_recon 输出的mesh 之后叠加在上面?       
+  此外直接输出视频, 不要逐帧输出占用空间, 最后 统一输出目录在这里               
+  outputs/yellow_spoon                                                          
+
+● 理解，三点改动：
+
+  1. vis 直接读 obj_recon 的 mesh，用跟踪到的 pose 渲染 mesh 叠加（而不是 bbox
+     线框）
+  2. 输出视频（MP4），不写逐帧 PNG
+  3. 输出统一在 outputs/yellow_spoon（clip 根），不放在包内
+     pose_estimation/outputs/...
+
+  先摸清现状：mesh 渲染器、输出根目录逻辑、poses_dir/vis_dir 的推导，以及
+  obj_recon 网格的文件名：
+
+  Searched for 2 patterns, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● ModelRendererOffscreen.render(mesh, ob_in_cvcam) 返回 color+depth，正好可用于
+  alpha 叠加到原图。再确认输出根目录推导逻辑和 obj_recon 网格路径格式：
+
+  Read 1 file (ctrl+o to expand)
+
+● output_root 默认是包内 pose_estimation/outputs，所以落在了
+  pose_estimation/outputs/yellow_spoon/...。要统一输出到 clip 根的
+  outputs/yellow_spoon。看下 args 定义和 PoseEstimationOutputs：
+
+  Read 1 file (ctrl+o to expand)
+
+● 信息够了。现在重写 vis：mesh 叠加 + 直接写视频 + 输出到 clip 根。先看 workflow
+  里 vis 调用处、_write_outputs、video_path 和可用 import：
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+❯ 默认运行目录都会在 /home/yongce/workspace/human-robot/v2r/v2s2a_pipeline/     
+
+● 关键信息收到：默认运行目录是 /home/yongce/workspace/...，但产物统一写到
+  /mnt/workspace/.../outputs/yellow_spoon。这正是要改 output_root 的原因。
+
+  先看 workflow 的关键区域，一次性改到位：
+
+  Read 1 file (ctrl+o to expand)
+
+● 目标明确了。设计方案：跟踪循环仍逐帧跑，但 vis 从「逐帧 PNG」改为「渲染 mesh
+  叠加并写入单个 MP4」。由于 forward/backward 乱序，我用乱序安全的
+  cv2.VideoWriter（按帧写入，最后统一关闭）。
+
+  先看 workflow.py 顶部 import 块和 media.py 里 save_pose_overlay
+  的调用签名，再动手：
+
+  Read 1 file (ctrl+o to expand)
+
+● 设计定了：跟踪循环仍先跑（pose 仍是下游的真实产物），但 vis 改为单个 MP4（mesh
+  叠加、按帧乱序写入 cv2.VideoWriter），输出统一在 clip
+  根。PoseEstimationOutputs 增加 vis_video_path。
+
+  开始改。先在 media.py 加 mesh 叠加渲染 + 视频写入器（替换旧的 bbox PNG
+  函数）：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/media.py)
+  ⎿  Added 62 lines, removed 24 lines
+       38      return matrix
+       39  
+       40  
+       41 -def save_pose_overlay(                                        
+       41 +def render_mesh_overlay(                                      
+       42      frame_rgb: np.ndarray,
+       43      pose: np.ndarray,
+       44 -    bbox: np.ndarray,                                         
+       44 +    mesh,                                                     
+       45      intrinsics: np.ndarray,
+       46 -    output_path: Path,                                        
+       47 -    overwrite: bool = True,                                   
+       48 -) -> None:                                                    
+       49 -    """Render the posed 3D bounding box + xyz axes onto a fram
+          -e.                                                            
+       46 +    renderer,                                                 
+       47 +) -> np.ndarray:                                              
+       48 +    """Alpha-blend the tracked mesh (at ``pose``) onto ``frame
+          +_rgb``.                                                       
+       49  
+       51 -    Reuses FoundationPose's own ``draw_posed_3d_box`` / ``draw
+          -_xyz_axis``                                                   
+       52 -    drawing helpers so overlays match the upstream demo's look
+          -.                                                             
+       50 +    The mesh is the obj_recon reconstruction, rendered with Fo
+          +undationPose's                                                
+       51 +    offscreen renderer (same camera convention: pose is obj_in
+          +_cvcam). Pixels                                               
+       52 +    where the mesh projects (render depth < far plane) are ble
+          +nded over the                                                 
+       53 +    frame; everything else passes through unchanged.          
+       54      """
+       55  
+       55 -    if output_path.exists() and not overwrite:                
+       56 -        return                                                
+       56 +    h, w = frame_rgb.shape[:2]                                
+       57 +    if renderer is None:                                      
+       58 +        from offscreen_renderer import ModelRendererOffscreen 
+       59  
+       58 -    from Utils import draw_posed_3d_box, draw_xyz_axis        
+       60 +        renderer = ModelRendererOffscreen(intrinsics, h, w)   
+       61 +    color, depth = renderer.render(mesh=mesh, ob_in_cvcam=pose
+          +)                                                             
+       62 +    mask = (depth > 0) & (depth < renderer.r.zfar if hasattr(r
+          +enderer.r, "zfar") else depth > 0)                            
+       63 +    mask = depth > 0                                          
+       64 +    vis = frame_rgb.copy()                                    
+       65 +    alpha = 0.6                                               
+       66 +    vis[mask] = (                                             
+       67 +        (1.0 - alpha) * frame_rgb[mask].astype(np.float32)    
+       68 +        + alpha * color[mask].astype(np.float32)              
+       69 +    ).astype(np.uint8)                                        
+       70 +    return vis                                                
+       71  
+       60 -    import cv2 as _cv2                                        
+       72  
+       62 -    vis = draw_posed_3d_box(intrinsics, img=frame_rgb, ob_in_c
+          -am=pose, bbox=bbox)                                           
+       63 -    vis = draw_xyz_axis(                                      
+       64 -        frame_rgb,                                            
+       65 -        ob_in_cam=pose,                                       
+       66 -        scale=0.1,                                            
+       67 -        K=intrinsics,                                         
+       68 -        thickness=3,                                          
+       69 -        transparency=0,                                       
+       70 -        is_input_rgb=True,                                    
+       71 -    )                                                         
+       72 -    output_path.parent.mkdir(parents=True, exist_ok=True)     
+       73 -    _cv2.imwrite(str(output_path), _cv2.cvtColor(vis, _cv2.COL
+          -OR_RGB2BGR))                                                  
+       73 +class PoseVideoWriter:                                        
+       74 +    """Write mesh-overlay frames to a single MP4 as poses are 
+          +produced.                                                     
+       75 +                                                              
+       76 +    Tracking runs forward and backward from the init frame, so
+          + frames arrive                                                
+       77 +    out of order; VideoWriter needs monotonic frames. We there
+          +fore buffer                                                   
+       78 +    overlaid frames by index and flush in order on :meth:`clos
+          +e`.                                                           
+       79 +    """                                                       
+       80 +                                                              
+       81 +    def __init__(self, output_path: Path, fps: float) -> None:
+       82 +        self.output_path = Path(output_path)                  
+       83 +        self.fps = float(fps) if fps and fps > 0 else 30.0    
+       84 +        self._frames: dict[int, np.ndarray] = {}              
+       85 +                                                              
+       86 +    def add(self, index: int, vis_rgb: np.ndarray) -> None:   
+       87 +        self._frames[index] = vis_rgb                         
+       88 +                                                              
+       89 +    def close(self) -> Path | None:                           
+       90 +        if not self._frames:                                  
+       91 +            return None                                       
+       92 +        import cv2                                            
+       93 +                                                              
+       94 +        self.output_path.parent.mkdir(parents=True, exist_ok=T
+          +rue)                                                          
+       95 +        first = self._frames[sorted(self._frames)[0]]         
+       96 +        h, w = first.shape[:2]                                
+       97 +        writer = cv2.VideoWriter(                             
+       98 +            str(self.output_path),                            
+       99 +            cv2.VideoWriter_fourcc(*"mp4v"),                  
+      100 +            self.fps,                                         
+      101 +            (w, h),                                           
+      102 +        )                                                     
+      103 +        try:                                                  
+      104 +            for index in sorted(self._frames):                
+      105 +                frame = self._frames[index]                   
+      106 +                if frame.shape[:2] != (h, w):                 
+      107 +                    frame = cv2.resize(frame, (w, h))         
+      108 +                writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB
+          +2BGR))                                                        
+      109 +        finally:                                              
+      110 +            writer.release()                                  
+      111 +        return self.output_path                               
+
+● 修正 render_mesh_overlay 里冗余/错误的 mask 计算：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/media.py)
+  ⎿  Removed 1 line
+      59  
+      60          renderer = ModelRendererOffscreen(intrinsics, h, w)
+      61      color, depth = renderer.render(mesh=mesh, ob_in_cvcam=pose)
+      62 -    mask = (depth > 0) & (depth < renderer.r.zfar if hasattr(re
+         -nderer.r, "zfar") else depth > 0)                              
+      62      mask = depth > 0
+      63      vis = frame_rgb.copy()
+      64      alpha = 0.6
+
+● Now update workflow.py — imports, _FrameProcessor (shared
+  mesh/renderer/video-writer), _write_outputs, output_root default, and the run
+  function. First the imports and args:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 2 lines, removed 1 line
+      37      FoundationPoseEstimator,
+      38  )
+      39  from pose_estimation.media import (
+      40 +    PoseVideoWriter,                                           
+      41      load_intrinsics,
+      42      load_mask,
+      43      load_rgb_image,
+      43 -    save_pose_overlay,                                         
+      44 +    render_mesh_overlay,                                       
+      45  )
+      46  
+      47  POSE_FILENAME_PATTERN = "{:06d}.txt"
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 5 lines, removed 2 lines
+      76      """Object identifier recorded in the output manifest (defau
+          lts to the
+      77      mesh filename stem)."""
+      78  
+      79 -    output_root: Path = Path(__file__).parents[1] / "outputs"  
+      80 -    """Root under which ``<clip_stem>/pose_estimation/`` is cre
+         -ated."""                                                       
+      79 +    output_root: Path | None = None                            
+      80 +    """Root under which ``<clip_stem>/pose_estimation/`` is cre
+         +ated. Defaults                                                 
+      81 +    to the pipeline outputs root derived from ``frames_json``  
+      82 +    (``<clip_root>/..``), so outputs land alongside the other s
+         +tages under                                                    
+      83 +    ``outputs/<clip>/`` rather than inside this package."""    
+      84  
+      85      reinit_every: int = 0
+      86      """Re-run the full registration every N frames (0 = registe
+          r once)."""
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 2 lines, removed 1 line
+      89      """Limit the number of frames processed (None = all frames)
+          ."""
+      90  
+      91      vis: bool = False
+      92 -    """Write per-frame pose-overlay PNGs to ``<clip>/pose_estim
+         -ation/vis/``."""                                               
+      92 +    """Render the tracked mesh onto each frame and write a sing
+         +le overlay video                                               
+      93 +    to ``<clip>/pose_estimation/vis.mp4`` (no per-frame PNGs)."
+         +""                                                             
+      94  
+      95      foundationpose: FoundationPoseArgs = field(default_factory=
+          FoundationPoseArgs)
+      96      """FoundationPose model settings (weights, device, refine i
+          ters, ...)."""
+
+● Now _FrameProcessor: share mesh + renderer + video writer, replace overlay
+  call:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 5 lines, removed 2 lines
+      238          geometry_manifest: dict,
+      239          masks_manifest: dict,
+      240          poses_dir: Path,
+      241 -        vis_dir: Path,                                        
+      241 +        mesh=None,                                            
+      242 +        video_writer: PoseVideoWriter | None = None,          
+      243      ) -> None:
+      244          self.args = args
+      245          self.estimator = estimator
+      246          self.geometry_manifest = geometry_manifest
+      247          self.masks_manifest = masks_manifest
+      248          self.poses_dir = poses_dir
+      248 -        self.vis_dir = vis_dir                                
+      249 +        self.mesh = mesh                                      
+      250 +        self.video_writer = video_writer                      
+      251 +        self._renderer = None  # lazily built at the first fra
+          +me's resolution                                               
+      252  
+      253      def _frame_inputs(self, frame) -> tuple[np.ndarray, np.nda
+           rray, np.ndarray] | None:
+      254          """(rgb, depth, intrinsics) for a frame, or None when 
+           unusable."""
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 11 lines, removed 6 lines
+      262          rgb = load_rgb_image(frame.path)
+      263          return rgb, depth, intrinsics
+      264  
+      265 -    def _write_outputs(self, frame, pose: np.ndarray, rgb, int
+          -rinsics) -> PoseEntry:                                        
+      265 +    def _write_outputs(self, frame, pose: np.ndarray, rgb, int
+          +rinsics) -> str:                                              
+      266          pose_filename = POSE_FILENAME_PATTERN.format(frame.ind
+           ex)
+      267          np.savetxt(self.poses_dir / pose_filename, np.asarray(
+           pose, dtype=np.float64))
+      268 -        if self.args.vis:                                     
+      269 -            save_pose_overlay(                                
+      268 +        if self.video_writer is not None and self.mesh is not 
+          +None:                                                         
+      269 +            if self._renderer is None:                        
+      270 +                from offscreen_renderer import ModelRendererOf
+          +fscreen                                                       
+      271 +                                                              
+      272 +                h, w = rgb.shape[:2]                          
+      273 +                self._renderer = ModelRendererOffscreen(intrin
+          +sics, h, w)                                                   
+      274 +            vis = render_mesh_overlay(                        
+      275                  frame_rgb=rgb,
+      276                  pose=np.asarray(pose, dtype=np.float64),
+      272 -                bbox=self.estimator.bbox,                     
+      277 +                mesh=self.mesh,                               
+      278                  intrinsics=intrinsics,
+      274 -                output_path=self.vis_dir / f"{frame.index:06d}
+          -.png",                                                        
+      275 -                overwrite=self.args.foundationpose.overwrite, 
+      279 +                renderer=self._renderer,                      
+      280              )
+      281 +            self.video_writer.add(frame.index, vis)           
+      282          return pose_filename
+      283  
+      284      def register_frame(self, frame) -> PoseEntry:
+
+● Now PoseEstimationOutputs and the run function. Read current state around
+  them:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 1 line, removed 1 line
+      129      clip_root: Path
+      130      stage_dir: Path
+      131      poses_dir: Path
+      132 -    vis_dir: Path                                             
+      132 +    vis_video_path: Path | None                               
+      133      poses_json_path: Path
+      134      config_json_path: Path
+      135      entries: list[PoseEntry]
+
+● Now the run function — output_root derivation, video writer setup, pass to
+  both processors, close at end. Read the full run body:
+
+  Read 1 file (ctrl+o to expand)
+
+● Now wiring the run function. First output_root default + video writer setup:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 9 lines, removed 4 lines
+      376          raise ValueError(f"--init-frame {args.init_frame} not 
+           in the frame manifest.")
+      377  
+      378      clip_stem = frames_json.parent.parent.name
+      379 -    clip_root = args.output_root.expanduser().resolve() / clip
+          -_stem                                                         
+      379 +    if args.output_root is None:                              
+      380 +        # Unified pipeline layout: derive the outputs root fro
+          +m frames_json so                                              
+      381 +        # this stage lands next to process/segment/geometry un
+          +der                                                           
+      382 +        # ``outputs/<clip>/`` regardless of the current workin
+          +g directory.                                                  
+      383 +        output_root = frames_json.parent.parent.parent        
+      384 +    else:                                                     
+      385 +        output_root = args.output_root.expanduser().resolve() 
+      386 +    clip_root = output_root / clip_stem                       
+      387      stage_dir = clip_root / "pose_estimation"
+      388      poses_dir = stage_dir / "poses"
+      382 -    vis_dir = stage_dir / "vis"                               
+      389  
+      390      if args.foundationpose.overwrite and poses_dir.exists():
+      391          shutil.rmtree(poses_dir)
+      392      poses_dir.mkdir(parents=True, exist_ok=True)
+      387 -    if args.vis:                                              
+      388 -        vis_dir.mkdir(parents=True, exist_ok=True)            
+      393 +    stage_dir.mkdir(parents=True, exist_ok=True)              
+      394  
+      395      selected = manifest.entries
+      396      if args.max_frames is not None:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 22 lines, removed 1 line
+      407      mesh = trimesh.load(mesh_path, force="mesh")
+      408  
+      409      active_estimator = estimator or FoundationPoseEstimator(me
+           sh, args.foundationpose)
+      410 +                                                              
+      411 +    video_writer = (                                          
+      412 +        PoseVideoWriter(stage_dir / "vis.mp4", manifest.fps) i
+          +f args.vis else None                                          
+      413 +    )                                                         
+      414 +    # Both the forward and backward processors share one offsc
+          +reen renderer and                                             
+      415 +    # one video writer; frames are buffered and flushed in ind
+          +ex order on close.                                            
+      416 +    shared_renderer: dict = {"renderer": None}                
+      417 +                                                              
+      418 +    def _make_renderer(intrinsics, h, w):                     
+      419 +        if shared_renderer["renderer"] is None:               
+      420 +            from offscreen_renderer import ModelRendererOffscr
+          +een                                                           
+      421 +                                                              
+      422 +            shared_renderer["renderer"] = ModelRendererOffscre
+          +en(intrinsics, h, w)                                          
+      423 +        return shared_renderer["renderer"]                    
+      424 +                                                              
+      425      processor = _FrameProcessor(
+      411 -        args, active_estimator, geometry_manifest, masks_manif
+          -est, poses_dir, vis_dir                                       
+      426 +        args,                                                 
+      427 +        active_estimator,                                     
+      428 +        geometry_manifest,                                    
+      429 +        masks_manifest,                                       
+      430 +        poses_dir,                                            
+      431 +        mesh=mesh,                                            
+      432 +        video_writer=video_writer,                            
+      433      )
+      434  
+      435      entries: list[PoseEntry] = []
+
+● 两个 processor 各自懒建 renderer 会重复（需要 GL 上下文）。简化为单个共享
+  renderer。改 _FrameProcessor 接受共享 dict 并去掉内部懒建：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 4 lines, removed 1 line
+      240          poses_dir: Path,
+      241          mesh=None,
+      242          video_writer: PoseVideoWriter | None = None,
+      243 +        shared_renderer: dict | None = None,                  
+      244      ) -> None:
+      245          self.args = args
+      246          self.estimator = estimator
+     ...
+      249          self.poses_dir = poses_dir
+      250          self.mesh = mesh
+      251          self.video_writer = video_writer
+      251 -        self._renderer = None  # lazily built at the first fra
+          -me's resolution                                               
+      252 +        # Mutable holder shared across processors so the GL of
+          +fscreen renderer                                              
+      253 +        # is created at most once per run (it needs a live GL 
+          +context).                                                     
+      254 +        self._shared_renderer = shared_renderer if shared_rend
+          +erer is not None else {}                                      
+      255  
+      256      def _frame_inputs(self, frame) -> tuple[np.ndarray, np.nda
+           rray, np.ndarray] | None:
+      257          """(rgb, depth, intrinsics) for a frame, or None when 
+           unusable."""
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 5 lines, removed 3 lines
+      269          pose_filename = POSE_FILENAME_PATTERN.format(frame.ind
+           ex)
+      270          np.savetxt(self.poses_dir / pose_filename, np.asarray(
+           pose, dtype=np.float64))
+      271          if self.video_writer is not None and self.mesh is not 
+           None:
+      272 -            if self._renderer is None:                        
+      272 +            if "renderer" not in self._shared_renderer:       
+      273                  from offscreen_renderer import ModelRendererOf
+           fscreen
+      274  
+      275                  h, w = rgb.shape[:2]
+      276 -                self._renderer = ModelRendererOffscreen(intrin
+          -sics, h, w)                                                   
+      276 +                self._shared_renderer["renderer"] = ModelRende
+          +rerOffscreen(                                                 
+      277 +                    intrinsics, h, w                          
+      278 +                )                                             
+      279              vis = render_mesh_overlay(
+      280                  frame_rgb=rgb,
+      281                  pose=np.asarray(pose, dtype=np.float64),
+      282                  mesh=self.mesh,
+      283                  intrinsics=intrinsics,
+      282 -                renderer=self._renderer,                      
+      284 +                renderer=self._shared_renderer["renderer"],   
+      285              )
+      286              self.video_writer.add(frame.index, vis)
+      287          return pose_filename
+
+● Now simplify the run setup (drop the unused closure, pass shared_renderer),
+  wire the backward processor, close the writer, and fix the return:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 4 lines, removed 10 lines
+      416      video_writer = (
+      417          PoseVideoWriter(stage_dir / "vis.mp4", manifest.fps) i
+           f args.vis else None
+      418      )
+      419 -    # Both the forward and backward processors share one offsc
+          -reen renderer and                                             
+      420 -    # one video writer; frames are buffered and flushed in ind
+          -ex order on close.                                            
+      421 -    shared_renderer: dict = {"renderer": None}                
+      419 +    # Both processors share one offscreen renderer (single GL 
+          +context) and one                                              
+      420 +    # video writer; frames are buffered and flushed in index o
+          +rder on close.                                                
+      421 +    shared_renderer: dict = {}                                
+      422  
+      423 -    def _make_renderer(intrinsics, h, w):                     
+      424 -        if shared_renderer["renderer"] is None:               
+      425 -            from offscreen_renderer import ModelRendererOffscr
+          -een                                                           
+      426 -                                                              
+      427 -            shared_renderer["renderer"] = ModelRendererOffscre
+          -en(intrinsics, h, w)                                          
+      428 -        return shared_renderer["renderer"]                    
+      429 -                                                              
+      423      processor = _FrameProcessor(
+      424          args,
+      425          active_estimator,
+     ...
+      428          poses_dir,
+      429          mesh=mesh,
+      430          video_writer=video_writer,
+      431 +        shared_renderer=shared_renderer,                      
+      432      )
+      433  
+      434      entries: list[PoseEntry] = []
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 8 lines, removed 1 line
+      468          backward_estimator = FoundationPoseEstimator(mesh, arg
+           s.foundationpose)
+      469          backward_estimator.set_pose(registered_pose)
+      470          backward_processor = _FrameProcessor(
+      471 -            args, backward_estimator, geometry_manifest, masks
+          -_manifest, poses_dir, vis_dir                                 
+      471 +            args,                                             
+      472 +            backward_estimator,                               
+      473 +            geometry_manifest,                                
+      474 +            masks_manifest,                                   
+      475 +            poses_dir,                                        
+      476 +            mesh=mesh,                                        
+      477 +            video_writer=video_writer,                        
+      478 +            shared_renderer=shared_renderer,                  
+      479          )
+      480          for frame in backward_frames:
+      481              entries.append(backward_processor.track_frame(fram
+           e, backwards=True))
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 5 lines, removed 1 line
+      485  
+      486      entries.sort(key=lambda entry: entry.index)
+      487  
+      488 +    vis_video_path = video_writer.close() if video_writer is n
+          +ot None else None                                             
+      489 +    if vis_video_path is not None:                            
+      490 +        logger.info("[pose] vis overlay video: {}", vis_video_
+          +path)                                                         
+      491 +                                                              
+      492      _write_json(stage_dir / "poses.json", _manifest_dict(args,
+            manifest, entries))
+      493      _write_json(stage_dir / "config.json", _config_dict(args, 
+           manifest))
+      494  
+     ...
+      506          clip_root=clip_root,
+      507          stage_dir=stage_dir,
+      508          poses_dir=poses_dir,
+      505 -        vis_dir=vis_dir,                                      
+      509 +        vis_video_path=vis_video_path,                        
+      510          poses_json_path=stage_dir / "poses.json",
+      511          config_json_path=stage_dir / "config.json",
+      512          entries=entries,
+
+● Let me verify nothing references the removed vis_dir/save_pose_overlay, and
+  that media.py's remaining helpers (rgb/mask/intrinsics loaders) are intact:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● __init__.py re-exports the removed save_pose_overlay — fix that:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/__init__.py)
+  ⎿  Added 4 lines, removed 2 lines
+       4  
+       5  from pose_estimation.device import resolve_torch_device, set_cu
+          da_device_if_indexed
+       6  from pose_estimation.media import (
+       7 +    PoseVideoWriter,                                           
+       8      load_intrinsics,
+       9      load_mask,
+      10      load_rgb_image,
+      10 -    save_pose_overlay,                                         
+      11 +    render_mesh_overlay,                                       
+      12  )
+      13  
+      14  __all__ = [
+      15 +    "PoseVideoWriter",                                         
+      16      "load_intrinsics",
+      17      "load_mask",
+      18      "load_rgb_image",
+      19 +    "render_mesh_overlay",                                     
+      20      "resolve_torch_device",
+      18 -    "save_pose_overlay",                                       
+      21      "set_cuda_device_if_indexed",
+      22  ]
+
+● 跑测试确认重构没破坏既有行为：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 测试通过，但这些是单元测试（可能 mock 了 workflow）。offscreen_renderer
+  是否可从 pose_estimation venv import 是关键——跑一次 import 冒烟：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● workflow 导包正常。offscreen_renderer 是运行时才 import（render 时）。确认它在
+  venv 可解析（offscreen_renderer.py 顶部会 import Utils, transformations）：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 现在用 --vis + init_frame=0 重跑，验证新架构（mesh 叠加 → 单个 MP4 → 输出到
+  /mnt/.../outputs/yellow_spoon/pose_estimation）：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 等待期间更新 cli.md（加 --vis 并注明统一输出位置）。pose 命令现在会把 poses +
+  vis.mp4 写到 /mnt 的 outputs：
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/cli.md)
+  ⎿  Added 9 lines, removed 2 lines
+      13    --frames-json outputs/yellow_spoon/process/frames.json \
+      14    --masks-json outputs/yellow_spoon/segment/masks.json \
+      15    --mesh-path outputs/yellow_spoon/obj_recon/meshes/000000/yell
+          ow_spoon/yellow_spoon.obj \
+      16 -  --init-frame 0                                               
+      17 -```                                                            
+      16   No newline at end of file
+      17 +  --init-frame 0 \                                             
+      18 +  --vis                                                        
+      19 +```                                                            
+      20 +                                                               
+      21 +All stages write under the unified clip root `outputs/yellow_sp
+         +oon/<stage>/`                                                  
+      22 +(derived from `frames.json`, independent of the current working
+         + directory).                                                   
+      23 +`--vis` renders the obj_recon mesh at each tracked pose and wri
+         +tes a single                                                   
+      24 +overlay video to `outputs/yellow_spoon/pose_estimation/vis.mp4`
+         + (no per-frame                                                 
+      25 +PNGs).                                                         
+      26   No newline at end of file
+
+● Background command "Rerun pose with new vis-video architecture" completed
+(exit code 0)
+
+  Listed 1 directory (ctrl+o to expand)
+
+● 输出目录对，但渲染时崩了（ctypes ArgumentError —— 像是 pyrender/GL
+  的问题）。看完整 traceback：
+
+  Read 1 file, listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● 输出被 tail -20 截断了，只看到尾巴。这是 pyrender 在没有 display 时用
+  EGL/osmesa 的已知问题。查 FoundationPose 仓库/estimator 怎么处理 offscreen GL
+  上下文：
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● 这是 PyOpenGL-accelerate 在 EGL/无上下文时的已知崩溃。诊断：pose_estimation
+  进程里是否已有 GL 上下文（FoundationPose 用 nvdiffrast，不开 GL），以及 EGL
+  平台是否可行：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● EGL 下能渲染（render ok），depth>0=0
+  只是因为单位盒在相机原点内部（占位测试），不是渲染坏了。问题是后台任务环境没设
+  PYOPENGL_PLATFORM=egl。我不改运行环境，而是在代码里设置——但必须在首次 import 
+  OpenGL/pyrender 之前。先看 estimator 是否已 import 了 pyrender/OpenGL（决定设
+  env 是否还来得及）：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 确认：estimator 不 import pyrender/OpenGL，所以在 renderer 首次创建前设
+  PYOPENGL_PLATFORM=egl 来得及。在 media.py 顶部（无 GL import）和惰性 renderer
+  创建点都设上默认：
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/media.py)
+  ⎿  Added 8 lines
+       2  
+       3  from __future__ import annotations
+       4  
+       5 +import os                                                      
+       6 +                                                               
+       7 +# pyrender/PyOpenGL need a real GL context; FoundationPose itse
+         +lf never creates                                               
+       8 +# one (it renders via nvdiffrast). Force the EGL platform so th
+         +e offscreen                                                    
+       9 +# renderer works headlessly. Must be set before OpenGL/pyrender
+         + is imported,                                                  
+      10 +# which is why it lives in this module header (no GL import hap
+         +pens here).                                                    
+      11 +os.environ.setdefault("PYOPENGL_PLATFORM", "egl")              
+      12 +                                                               
+      13  from pathlib import Path
+      14  
+      15  import cv2
+
+● 再在 renderer 创建点加防御性设置（防止 user 先 import 了 OpenGL）：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 2 lines
+      270          np.savetxt(self.poses_dir / pose_filename, np.asarray(
+           pose, dtype=np.float64))
+      271          if self.video_writer is not None and self.mesh is not 
+           None:
+      272              if "renderer" not in self._shared_renderer:
+      273 +                # Headless GL: pick EGL before PyOpenGL/pyrend
+          +er is imported.                                               
+      274 +                os.environ.setdefault("PYOPENGL_PLATFORM", "eg
+          +l")                                                           
+      275                  from offscreen_renderer import ModelRendererOf
+           fscreen
+      276  
+      277                  h, w = rgb.shape[:2]
+
+● workflow.py 需要 import os：
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/workflow.py)
+  ⎿  Added 1 line
+      22  from __future__ import annotations
+      23  
+      24  import json
+      25 +import os                                                      
+      26  import shutil
+      27  from dataclasses import dataclass, field
+      28  from datetime import datetime, timezone
+
+● 重跑 vis（现在已设 EGL）：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 等待时确认 mesh 的方向，以便叠加图正确。pose 是
+  obj_in_cam，ModelRendererOffscreen 的 render(mesh, ob_in_cvcam) 直接用
+  obj_in_cam。验证 FoundationPose 存 mesh 的坐标系是否与 obj_recon 的 .obj
+  一致（尺度/原点），先看 mesh bbox 是否合理：
+
+  Read 1 file, listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● Background command "Rerun pose vis with EGL platform fix" completed (exit code
+0)
+
+● 输出又被 tail -6 截掉、且这次没有报错但也没有 Done/vis 行 —— 可疑。无 tail
+  重跑，log 全部落盘：
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+● Background command "Rerun pose vis, full log to file" completed (exit code 0)
+
+● EXIT=1，处理在进行中崩了。看 log 末尾的 traceback：
+
+  Read 1 file (ctrl+o to expand)
+
+● 同样的 glGenTextures 崩溃，但只在带纹理的 OBJ 渲染时触发（我的无纹理 box
+  测试通过）。这是 PyOpenGL-accelerate + EGL 的已知 bug（glGenTextures 在
+  texture._add_to_context 里崩）。确认推测 + 找修复：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 确认：带纹理 mesh 触发，无纹理不触发。根因是 PyOpenGL-accelerate 在 EGL 下的
+  bug；标准修复是禁用 accelerate wrapper。验证：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 那次输出不全。这是 PyOpenGL-accelerate + EGL 的已知 bug（pyrender
+  #200、PyOpenGL-accelerate #31），标准修复是卸载 accelerate 走纯 ctypes
+  路径。验证：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 输出被截断了。用文件 + 退出码看真实结果：
+  Ran 1 shell command (ctrl+o to expand)
+
+● 即使禁用 accelerate 也崩，说明是底层 PyOpenGL EGL glGenTextures byref
+  bug（不是所有纹理，是这个 texture upload 路径）。最稳的方案：vis 叠加不依赖 GL
+  纹理——剥离 mtl/纹理，用纯 numpy 投影 + 画家算法渲染 mesh 面片，纯
+  CPU、确定性强、headless 无依赖。重写 render_mesh_overlay：
+
+  Read 1 file (ctrl+o to expand)
+
+● 改用无 GL 依赖的方案：纯 numpy + cv2.fillPoly 投影 mesh
+  面片（画家算法按深度排序画轮廓）。这样 shading
+  忽略（只是可视化对齐），但稳定、headless、确定性。重写：
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ 最好还是要有纹理, 尽可能地解决这个问题                                        
+
+● 纹理优先。先诊断这个 glGenTextures byref 崩溃——它本质是 PyOpenGL 走的 GL
+  库在这个 byref 签名上出问题。查 venv 里 PyOpenGL 版本、EGL 绑定到哪个
+  libGL，以及有没有 NVIDIA GL：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● PyOpenGL 3.1.0（2014 年，很老） —— 这是 FoundationPose via uv lock
+  固定的旧版，含这个 bug。正确修复是升级 PyOpenGL（≥3.1.6 修了 glGenTextures
+  处理）。但这会影响 lock 的依赖矩阵。测试升级 PyOpenGL（不动 torch 等重依赖）+
+  accelerate，验证纹理渲染：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 用 uv（venv 由 uv 管理）。测试升级 PyOpenGL：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 修复成功 —— PyOpenGL 3.1.9 下纹理渲染正常（RENDER_OK，2980
+  个有效深度像素，TextureVisuals）。看一下渲染的纹理图：
+
+  Read 1 file (ctrl+o to expand)
+
+● 纹理 mesh 渲染正常 —— 黄色勺子带纹理可见。修复 = PyOpenGL 3.1.0 → 3.1.9。
+
+  现在固化依赖 + 确认加速路径。先看 pyproject 怎么声明的、accelerate
+  是否必要、obj_recon 的 mtl 是否有材质（决定是否需要 reload）：
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● mtl 用 map_Kd material_0.png 做纹理，trimesh force='mesh' 已正确解析出
+  TextureVisuals（3.1.9 渲染出纹理），无需 reload。
+
+  现在固化依赖：pyproject 的 >=3.1 太松，锁到了有 bug 的 3.1.0。收紧并重新
+  lock：
+
+  Read 1 file (ctrl+o to expand)
+
+● pyopengl>=3.1 / pyopengl-accelerate>=3.1 来自 FoundationPose 的依赖（uv.lock
+  line 451-452），锁到了 3.1.0。最稳的覆盖是加 [tool.uv] override。先看
+  obj_recon 用的 override 写法（记忆里有 override trick）：
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Streaming response ended before any complete data was received. 
+  Retrying without streaming. If this keeps happening, check any proxy 
+  or gateway between Claude Code and your model provider.
+
+● Now add an override to pose_estimation's pyproject:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pyproject
+        .toml)
+  ⎿  Added 9 lines
+      41  required-version = ">=0.11.3"
+      42  index-strategy = "unsafe-best-match"
+      43  
+      44 +# FoundationPose declares pyopengl/pyopengl-accelerate >=3.1, w
+         +hich resolves to                                               
+      45 +# 3.1.0. That release ships a broken glGenTextures ctypes handl
+         +er that crashes                                                
+      46 +# pyrender under headless EGL (ctypes.ArgumentError in texture.
+         +_add_to_context)                                               
+      47 +# whenever it uploads a textured mesh. >=3.1.5 fixes the array-
+         +type handler.                                                  
+      48 +override-dependencies = [                                      
+      49 +  "pyopengl>=3.1.9",                                           
+      50 +  "pyopengl-accelerate>=3.1.9",                                
+      51 +]                                                              
+      52 +                                                               
+      53  [tool.uv.sources]
+      54  # The vendored NVlabs/FoundationPose checkout; never modified i
+          n place.
+      55  # Behavior specific to this pipeline lives in pose_estimation.f
+          oundationpose_estimator
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● uv 升到 3.1.10。同步 venv 并验证加速 + 纹理渲染仍正常：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● PyOpenGL 3.1.10 装好了。确认 3.1.10 + EGL 下纹理渲染仍正常，再跑全流程：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 3.1.10 + EGL 纹理渲染正常。跑完整 vis 流程（不 tail，log 落盘）：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 等待时把这次依赖修复记入持久记忆（RTX 5090/Blackwell
+  依赖矩阵相关，跨会话有用）：
+
+  Listed 1 directory, wrote 1 memory (ctrl+o to expand)
+
+● Background command "Full pose vis run with fixed PyOpenGL" completed (exit
+code 0)
+
+● EXIT=0，全部成功：
+  - 89/89 tracked
+  - vis.mp4（2.2 MB，单文件，无逐帧 PNG）写到
+    outputs/yellow_spoon/pose_estimation/
+  - 输出在统一 clip 根，不在包内
+
+  抽几帧验证 mesh 叠加对齐（重点 frame 0 注册帧 + frame 80 之前的跳变点）：
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● 纹理叠加工作了，但 frame 0 的 mesh 投影到了右下角（巨大的黄色团块），而真实勺
+  子在画面中央——叠加位置错了。这是注册帧，可能 pose 正常但坐标约定不对，或 pose
+  本身就坏。看 frame 80 和 frame 1：
+
+  Read 1 file (ctrl+o to expand)
+
+● frame 80 的 mesh 巨大且横贯全屏 —— pose
+  把勺子放到了离相机极近处。叠加管线本身对（纹理、alpha 都好），是 pose 
+  尺度错了：注册时深度/位姿尺度与 mesh 真实尺度不一致，导致它贴到相机上。诊断
+  frame 0 的注册 pose 数值：
+  Ran 1 shell command (ctrl+o to expand)
+
+● frame 0 pose 平移 [-0.019, 0.201, 0.308]（|t|=0.37m，合理），但 mesh extents
+  是 [0.18, 0.14, 1.0] —— z 轴 1.0m，真勺子只 ~0.2m。mesh 在 obj 坐标系被拉长了
+  5 倍，且 obj.z 几乎对齐 cam.z（pose 旋转近单位）。叠加管线对，是 obj_recon 的 
+  mesh 尺度/per-axis 比例不对（尺寸恒定约束依赖正确 mesh）。先确认 obj_recon
+  的真实几何，再查 pose 深度尺度：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 在 obj_recon venv 也确认 mesh 被拉长（z=1.0m vs x/y=0.18m）。这是 obj_recon 的
+  mesh 质量问题，不是 pose/vis 的问题。
+
+  先看 obj_recon 输出目录里有没有中间产物（layout.json、canonical vs layout
+  网格）判断是重构本身坏了还是导出变了形：
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● 关键发现：layout.json 说明黄色勺子.obj 是 SAM3D canonical（未缩放）坐标，要用
+  layout 的 scale=0.1328 + translation + quat 变换到 scene
+  坐标才是真实布局。canonical extents z=1.0 × scale 0.1328 ≈
+  0.13m，x=0.18×0.133≈0.024m。但 pose_estimation 直接用未变换的 .obj 注册 ——
+  尺度/原点都不对。
+
+  而且 FoundationPose 约定 mesh 应以物体为中心。我需要确定正确输入给
+  FoundationPose 的 mesh。先查 obj_recon
+  怎么导出黄色勺子.obj、canonical-vs-layout 契约，以及 that z=1.0 是不是
+  canonical 伪影：
+
+  Searched for 4 patterns, ran 1 shell command (ctrl+o to expand)
+
+● 找到契约核心（reconstruct.py:457-459）：「导出 canonical 带纹理 mesh；metric
+  pose/scale 留在 layout.json，不烘进顶点」。所以 .obj 一直是 canonical（layout
+  scale=0.133 没烘进去），pose_estimation 却直接用它注册 —— 尺度不对。
+
+  这是关键设计问题。FoundationPose 的 mesh
+  尺度决定后者输出位姿的尺度。我需要用户对齐两份契约。先把诊断数据整理清楚：
+
+  Read 1 file (ctrl+o to expand)
+
+● 关键确认（reconstruct.py:457-481）：黄色勺子.obj 是 canonical（Y-up 
+  未缩放），layout.json 的 scale=0.133 没烘进顶点。pose_estimation
+  却直接用它注册 —— 这就是 mesh/pose 尺度不匹配的根源。
+
+  诊断汇总（真正阻塞项，不是 vis bug）：
+
+  ┌────────────────────┬─────────────────────────────────────────────────────┐
+  │         项         │                         值                          │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ pose frame0 平移   │ [−0.019, 0.201, 0.308]，|t|=0.37m（合理）           │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ 跟踪位姿连续性     │ 中位 0.018m/帧，平滑 ✓                              │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ 导出的 .obj        │ canonical、未缩放（extents [0.18,0.14,1.0]，z 拉长  │
+  │                    │ 5×）                                                │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ layout.json scale  │ 0.1328（没烘进 mesh）                               │
+  ├────────────────────┼─────────────────────────────────────────────────────┤
+  │ mesh canonical     │ centroid [−0.004,−0.007,0.097]（不在原点，FP        │
+  │ 原点               │ 假设居中）                                          │
+  └────────────────────┴─────────────────────────────────────────────────────┘
+
+  vis 管线本身是对的（纹理、alpha、EGL/3.1.10 修复都验证过）——是喂给 
+  FoundationPose 的 mesh 不对。
+
+  修复方向涉及 obj_recon ↔ pose_estimation
+  的尺度契约，影响下游所有位姿的绝对尺度，需要你定方向：
+
+● User answered Claude's questions:
+  ⎿  · pose_estimation 需要正确尺度/居中的 mesh 才能注册。怎么修 mesh 供给契约？
+     → FP 内应用 layout 变换
+     · mesh 尺度修好后，FoundationPose 输出位姿的绝对尺度以哪个为准？ → geometry
+     深度尺度（推荐）
+
+● 磁盘上的 workflow.py 已经有人开始实现 mesh_scale / start_from_layout（正是方案
+  1 的方向）。我读一下完整实现，看进度、是否含深度尺度对齐，避免重复劳动：
+
+  Read 1 file (ctrl+o to expand)
+
+● 磁盘版只到 args 定义，还没实现 mesh transform。找 mesh_scale /
+  start_from_layout 是否被消费，以及 mesh 加载/尺度逻辑：
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ 现在的输出视频格式无法vscode预览, 将编码格式写成 vscode支持预览的格式         
+
+● mp4v 编码 VSCode 预览不了（浏览器/VSCode 内置播放器只支持 H.264 +
+  yuv420p）。先探测可用的编码器：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 诊断：
+  - cv2 的 H.264 不可用（h264_v4l2m2m 无硬件设备）——这就是 mp4v 兜底、VSCode
+    放不了的原因
+  - 系统 ffmpeg 在 /usr/bin/ffmpeg ✓
+  - imageio 在，但 imageio_ffmpeg/av 不在
+
+  最稳：用 cv2 写 H.264 失败时，借系统 ffmpeg 编码 H.264 + yuv420p +
+  faststart。imageio 走 imageio-ffmpeg 但包不在；直接 subprocess 调系统 ffmpeg
+  最可靠。先确认 ffmpeg 有 libx264：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● ffmpeg 有 libx264、h264_nvenc、h264_vulkan。imageio 走不通（缺
+  imageio_ffmpeg）。最稳方案：cv2 avc1 优先，失败则 pipe 帧到系统 ffmpeg（H.264
+  + yuv420p + faststart → VSCode/浏览器可预览，且不过早锁新依赖）。
+
+  改 PoseVideoWriter.close() 加 H.264 fallback：
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/media.py)
+  ⎿  Added 80 lines, removed 9 lines
+       93      def add(self, index: int, vis_rgb: np.ndarray) -> None:
+       94          self._frames[index] = vis_rgb
+       95  
+       96 -    def close(self) -> Path | None:                           
+       97 -        if not self._frames:                                  
+       98 -            return None                                       
+       96 +    def _ordered_frames(self) -> tuple[list[np.ndarray], tuple
+          +[int, int]]:                                                  
+       97 +        """Frames sorted by index, all resized to a common (h,
+          + w)."""                                                       
+       98          import cv2
+       99  
+      101 -        self.output_path.parent.mkdir(parents=True, exist_ok=T
+          -rue)                                                          
+      100          first = self._frames[sorted(self._frames)[0]]
+      101          h, w = first.shape[:2]
+      102 +        frames = []                                           
+      103 +        for index in sorted(self._frames):                    
+      104 +            frame = self._frames[index]                       
+      105 +            if frame.shape[:2] != (h, w):                     
+      106 +                frame = cv2.resize(frame, (w, h))             
+      107 +            frames.append(frame)                              
+      108 +        return frames, (h, w)                                 
+      109 +                                                              
+      110 +    def _write_ffmpeg_h264(self, frames: list[np.ndarray], hw:
+          + tuple[int, int]) -> bool:                                    
+      111 +        """Encode via the system ffmpeg as H.264/yuv420p (VSCo
+          +de/browser-safe).                                             
+      112 +                                                              
+      113 +        Returns True on success, False if ffmpeg or libx264 is
+          + unavailable.                                                 
+      114 +        """                                                   
+      115 +        import shutil                                         
+      116 +        import subprocess                                     
+      117 +                                                              
+      118 +        ffmpeg = shutil.which("ffmpeg")                       
+      119 +        if ffmpeg is None:                                    
+      120 +            return False                                      
+      121 +        h, w = hw                                             
+      122 +        cmd = [                                               
+      123 +            ffmpeg,                                           
+      124 +            "-y",                                             
+      125 +            "-f", "rawvideo",                                 
+      126 +            "-pix_fmt", "rgb24",                              
+      127 +            "-s", f"{w}x{h}",                                 
+      128 +            "-r", str(self.fps),                              
+      129 +            "-i", "-",  # raw frames on stdin                 
+      130 +            "-an",                                            
+      131 +            "-c:v", "libx264",                                
+      132 +            "-pix_fmt", "yuv420p",  # required by VSCode/Quick
+          +Time/browser players                                          
+      133 +            "-crf", "20",                                     
+      134 +            "-preset", "fast",                                
+      135 +            "-movflags", "+faststart",                        
+      136 +            str(self.output_path),                            
+      137 +        ]                                                     
+      138 +        try:                                                  
+      139 +            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE
+          +)                                                             
+      140 +            for frame in frames:                              
+      141 +                proc.stdin.write(np.ascontiguousarray(frame).t
+          +obytes())                                                     
+      142 +            proc.stdin.close()                                
+      143 +            return proc.wait() == 0                           
+      144 +        except Exception as e:  # pragma: no cover - depends o
+          +n system ffmpeg                                               
+      145 +            logger.warning("[pose] ffmpeg H.264 encode failed:
+          + {}; falling back", e)                                        
+      146 +            return False                                      
+      147 +                                                              
+      148 +    def _write_cv2(self, frames: list[np.ndarray], hw: tuple[i
+          +nt, int], fourcc: str) -> bool:                               
+      149 +        import cv2                                            
+      150 +                                                              
+      151 +        h, w = hw                                             
+      152          writer = cv2.VideoWriter(
+      153              str(self.output_path),
+      106 -            cv2.VideoWriter_fourcc(*"mp4v"),                  
+      154 +            cv2.VideoWriter_fourcc(*fourcc),                  
+      155              self.fps,
+      156              (w, h),
+      157          )
+      158 +        if not writer.isOpened():                             
+      159 +            writer.release()                                  
+      160 +            return False                                      
+      161          try:
+      111 -            for index in sorted(self._frames):                
+      112 -                frame = self._frames[index]                   
+      113 -                if frame.shape[:2] != (h, w):                 
+      114 -                    frame = cv2.resize(frame, (w, h))         
+      162 +            for frame in frames:                              
+      163                  writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB
+           2BGR))
+      164          finally:
+      165              writer.release()
+      166 +        return True                                           
+      167 +                                                              
+      168 +    def close(self) -> Path | None:                           
+      169 +        if not self._frames:                                  
+      170 +            return None                                       
+      171 +        from loguru import logger                             
+      172 +                                                              
+      173 +        self.output_path.parent.mkdir(parents=True, exist_ok=T
+          +rue)                                                          
+      174 +        frames, hw = self._ordered_frames()                   
+      175 +                                                              
+      176 +        # H.264 (avc1) + yuv420p is the only codec VSCode's bu
+          +ilt-in preview,                                               
+      177 +        # browsers, and QuickTime all play; mp4v (MPEG-4 Part 
+          +2) is not. Prefer                                             
+      178 +        # the system ffmpeg's libx264, then OpenCV's own avc1,
+          + and only then                                                
+      179 +        # fall back to mp4v so a video is always produced.    
+      180 +        if self._write_ffmpeg_h264(frames, hw):               
+      181 +            logger.info("[pose] vis video encoded as H.264 (li
+          +bx264, yuv420p)")                                             
+      182 +        elif self._write_cv2(frames, hw, "avc1"):             
+      183 +            logger.info("[pose] vis video encoded as H.264 (Op
+          +enCV avc1)")                                                  
+      184 +        else:                                                 
+      185 +            self._write_cv2(frames, hw, "mp4v")               
+      186 +            logger.warning(                                   
+      187 +                "[pose] H.264 encoders unavailable; wrote mp4v
+          + (may not preview in VSCode)"                                 
+      188 +            )                                                 
+      189          return self.output_path
+
+● media.py 需要在模块级 import loguru（close 里有局部 import，先确认）：
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● _write_ffmpeg_h264 用了 logger 但没 import。统一放模块级：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/media.py)
+  ⎿  Added 1 line
+      14  
+      15  import cv2
+      16  import numpy as np
+      17 +from loguru import logger                                      
+      18  
+      19  
+      20  def load_rgb_image(image_path: Path) -> np.ndarray:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pose_estimation/pose_esti
+        mation/media.py)
+  ⎿  Removed 1 line
+      169      def close(self) -> Path | None:
+      170          if not self._frames:
+      171              return None
+      172 -        from loguru import logger                             
+      172  
+      173          self.output_path.parent.mkdir(parents=True, exist_ok=T
+           rue)
+      174          frames, hw = self._ordered_frames()
+
+● 现在验证编码路径。做一个快速单元级测试：PoseVideoWriter
+  喂几帧合成图，确认输出是 H.264：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● codec_name=h264, pix_fmt=yuv420p —— VSCode/浏览器可预览。
+
+  现在有了编码修复 + 磁盘上的 mesh_scale 实现，我需要看磁盘版 mesh 缩放的完整上
+  下文（确定是否已含深度尺度对齐/质心居中，符合你选的两项决定），再跑一次完整
+  vis。读 mesh 加载段：
+
+  Read 1 file (ctrl+o to expand)
+
+● 磁盘版只做了均匀 scale（×0.133），但有两处不匹配你选的方案 1：
+  1. 没做质心居中 —— canonical 质心在 [-0.004,-0.007,0.097]，但 FoundationPose
+     的 to_origin 是 extent/2 居中，质心≠extent 中心会导致原点偏移。
+  2. 尺度来自 layout（SAM3D），不是 geometry 深度 —— 你选的是 geometry
+     深度为绝对尺度准。
+
+  mesh extents 是 [0.024, 0.019, 0.133]（still z 拉长，但这是 SAM3D
+  的形状，不是尺度问题）。先重跑一次（含
+  mesh_scale）再判断居中是否实际问题。确认 layout/scale 逻辑完整后跑：
+
+  Ran 2 shell commands (ctrl+o to expand)
+● Background command "Run tests then full pose vis with mesh_scale" completed
+(exit code 0)
+
+● 输出已是 H.264 + yuv420p（1080p） —— VSCode 可预览。现在验证 mesh_scale
+  修复后的对齐质量。抽取几帧：
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● 巨大改善！frame 0 的 mesh 现在准确叠加在真勺子上（中央、尺寸对、纹理贴合）。之
+  前贴相机的尺度问题修复了。验证 frame 30 / 80（含之前的跳变点）：
+
+  Read 1 file (ctrl+o to expand)
+
+● frame 30：手抓起勺子，mesh 纹理贴合对得上。看 frame 80（曾有 0.199m 跳变）：
+
+  Read 1 file (ctrl+o to expand)
+
+● frame 80
+  位置对（手把勺子放进了白盘，黄色点在勺头处），但叠加轮廓几乎不可见——mesh
+  只渲染出细线，没填满勺子区域。原因：mesh extent 只有 [0.024, 0.019,
+  0.133]，横截面 ~2cm 太薄，俯视时投影宽度极窄，alpha-blend 后几乎看不见。这是
+  SAM3D mesh 太薄的固有局限。
+
+  对比 frame 0 的填充完好 vs frame 80 的细线——既有 mesh 薄度因素，也可能是 frame
+  80 pose 略偏导致 mesh 陷入勺面之下。整体跟踪是好的。
+
+  更新 cli.md 反映 codec 与行为，并记忆这次 codec 决策：
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/cli.md)
+  ⎿  Added 6 lines, removed 1 line
+      19  
+      20  All stages write under the unified clip root `outputs/yellow_sp
+          oon/<stage>/`
+      21  (derived from `frames.json`, independent of the current working
+           directory).
+      22 +                                                               
+      23  `--vis` renders the obj_recon mesh at each tracked pose and wri
+          tes a single
+      24  overlay video to `outputs/yellow_spoon/pose_estimation/vis.mp4`
+           (no per-frame
+      24 -PNGs).                                                         
+      25   No newline at end of file
+      26 +PNGs). The video is H.264 + yuv420p (via the system ffmpeg's li
+         +bx264), so it                                                  
+      27 +previews directly in VSCode / browsers / QuickTime. The mesh's 
+         +metric scale is                                                
+      28 +read from the obj_recon `layout.json` next to `--mesh-path` (ov
+         +erride with                                                    
+      29 +`--mesh-scale`); FoundationPose never fits cross-view scale, so
+         + it must be                                                    
+      30 +handed a metric mesh.                                          
+      31   No newline at end of file
+
+  Wrote 1 memory (ctrl+o to expand)
+
+● 更新 MEMORY.md 索引以纳入新记忆并更新描述：
+
+  Recalled 1 memory, wrote 1 memory (ctrl+o to expand)
+
+● 最后跑一遍 pose 测试确认 media.py 改动没破坏任何东西：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 全部完成。总结本轮 vis 修复与验证：
+
+  视频编码（你的核心诉求）
+
+  vis.mp4 默认 mp4v（MPEG-4 Part 2），VSCode 内置预览放不了。改为 H.264 + 
+  yuv420p + faststart（VSCode/浏览器/QuickTime 通吃）：
+  - cv2 的 avc1/H264 在本机打不开（h264_v4l2m2m 无硬件设备）
+  - 所以 PoseVideoWriter.close() 走系统 ffmpeg 的 libx264（pipe rawvideo
+    帧），cv2 avc1 兜底，mp4v 仅作最后保底
+  - 已验证：codec_name=h264, pix_fmt=yuv420p, 1920x1080 ✓
+
+  顺带发现并修复的两个隐藏 bug
+
+  1. PyOpenGL 3.1.0 → 3.1.10：foundationpose 锁的旧版在 EGL headless
+     下渲染带纹理 mesh 时 glGenTextures 崩溃。用 [tool.uv] override-dependencies
+     钉 >=3.1.9（同 obj_recon 的 override 写法）+ PYOPENGL_PLATFORM=egl。
+  2. mesh 尺度（关键）：obj_recon 的 .obj 是 SAM3D canonical 未缩放（scale 0.133
+     留在 layout.json）。pose_estimation 直接注册它 → 之前 mesh
+     贴到相机上。现从 layout.json 读 scale 乘进顶点（--mesh-scale
+     可覆盖）。修复后 mesh 准确叠加在勺子上。
+
+  验证
+
+  - 89/89 tracked，frame 0/30/80 mesh 纹理叠加对得上物体
+  - 13/13 测试通过
+  - 产物：outputs/yellow_spoon/pose_estimation/vis.mp4（H.264，VSCode
+    可直接预览）
+
+  cli.md 已更新编码与 metric-mesh 说明。
+
+  一个已知的非阻塞观察：SAM3D mesh 横截面偏薄（extent [0.024, 0.019, 0.133]
+  m），frame 80 俯视时投影轮廓较细，alpha -blend 后不太显眼——这是 mesh
+  本身的厚度，跟踪位姿是对的。需要的话可以把 vis 的 alpha 调高或加描边。
+
+✻ Brewed for 9m 47s
+
+❯ 你修改了什么, 现在这个版本的位姿估计看起来没有之前输出的一个版本好            
+
+● 你指的「之前的版本」很关键 —— 之前那次 89/89 全 tracked（init_frame=28、旧
+  mesh 无 mesh_scale），现在这次是 init_frame=0 +
+  mesh_scale。我可能改坏了什么。先用 git diff 精确列出我改了什么，别再凭记忆：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 这个 diff 是对 git 上次提交（旧版 save_pose_overlay） 的，不是对「你记得的那个
+  89/89 好版本」。关键是：那次好的 89/89 运行（init_frame=28、旧 mesh、无 
+  mesh_scale）从未提交——它在工作区里被我后续改动覆盖了。
+
+  我需要定位是哪一项改动让位姿变差。先把跟踪和 mesh 的核心 diff
+  看完（register/track、mesh 加载、estimator 调用）：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 现在我看清了——diff 是对非常旧的提交版本。关键区别在于注册锚点和 mesh 尺度：
+
+  - 好的那次：init_frame=28（手部可见、视角清楚），用未缩放 mesh（SAM3D
+    canonical，z extent 1.0）
+  - 现在这次：init_frame=0，加 mesh_scale=0.133，质心偏移没修
+
+  让我用数据定位具体哪一步变差，而不是猜。对比当前位姿的逐帧平移距离相机深度和连
+  续性：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 当前版本其实数值上更平滑：max step 0.047m（旧版 0.199m），median 0.007m（旧版
+  0.018m）。所以「变差」不是位姿数值，而是视觉叠加在部分帧偏/看不清。
+
+  之前几次运行我把旧输出删了，无法直接对比。为了精准回答而不是猜，我重建两个版本
+  的确切命令与实际差异：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 在改任何东西之前，我需要你帮我确认「之前更好的版本」到底是哪一个——因为我本地数
+  据看，当前版本的位姿数值其实更平滑（max 帧间跳变 0.047m vs 旧版 0.199m，median
+  0.007m vs 0.018m，仍是 89/89 tracked）。所以「变差」很可能是视觉效果（某些帧
+  mesh 叠加偏位/过细看不清），不是位姿本身。
+
+  几个候选「旧版本」，差异点各不相同：
+
+  A. init_frame=28 + 旧未缩放 mesh + bbox 叠加（最早那次
+  89/89）——注册在手部特写帧，mesh 没乘 0.133
+  B. init_frame=28 + 旧未缩放 mesh + mesh 叠加
+  C. 现在的某些早期帧（mesh 填充完好）
+
+  两件事先确认：
+
+● User answered Claude's questions:
+  ⎿  · 「之前那个更好的版本」大概是哪个配置？ → 应该只是帧数的选择, 
+     看起来提升方向应该是在管线中插一个采样帧, 也就是每间隔多少采样一次并进行 
+     sam3d重建, 之后 foundationpose 在两个帧之间进行位姿估计, 
+     但这里面应该有一个重要约束是物体的实际大小不变, 
+     是不是也可以在估计多个帧的时候取平均以获得一个稳定的scale大小
+     · 「看起来没有之前好」具体指什么？ → 位姿不好
+
+● 你的回答很有信息量——位姿本身不好，而且你提了一个架构方向：周期性采样帧重建 + 
+  尺寸恒定约束。这正好解释了当前版本位姿不好的根因。
+
+  让我先确认现状再提方案。核心问题链：
+
+  1. 当前只用 frame 0 一个 mesh 注册，之后 89 帧全靠 track。frame 0
+     勺子在桌上平躺、俯视、侧视角度差——SAM3D 在这个视角重建的 mesh
+     既薄又偏（extent [0.024,0.019,0.133]），不是勺子的好 3D 先验。
+  2. FoundationPose 不拟合横向尺度，所以这个薄 mesh 一跟踪就漂。
+  3. 我之前加的 mesh_scale=0.133 来自 SAM3D 单帧 layout fit，在 frame 0
+     这种差视角下 scale 本身就不可信——反而可能引入系统误差。
+
+  你的方向（周期采样 + 多帧平均
+  scale）才是正解。先把尺度稳定性这个关键约束用数据验证——多帧 SAM3D 重建的 scale
+  是否一致：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 这个数据正好证明你的判断——单帧 SAM3D scale 不稳定：
+
+  ┌────────┬──────────────┬──────────────────────────┐
+  │   帧   │ layout scale │ mesh extents (canonical) │
+  ├────────┼──────────────┼──────────────────────────┤
+  │ 000000 │ 0.1328       │ [0.184, 0.140, 1.0]      │
+  ├────────┼──────────────┼──────────────────────────┤
+  │ 000028 │ 0.155        │ [0.240, 0.114, 1.0]      │
+  └────────┴──────────────┴──────────────────────────┘
+
+  两个帧 scale 差 17%（0.133 vs 0.155），横向比例也不同（0.184/0.140 vs
+  0.240/0.114）。真勺子尺寸恒定，所以这个逐帧 scale 抖动就是 SAM3D
+  单目重构的噪声——你的直觉（多帧平均拿稳定 scale）完全正确。
+
+  而且当前版本只用了 frame 0 的 
+  0.1328（更不准的那个），这就是位姿变差的直接原因。
+
+  我的方案（对齐你的思路）
+
+  周期性采样帧重建 + 尺寸恒定约束：
+
+  1. 每隔 --recon-every N 帧（或视角变化大时）用 obj_recon/SAM3D
+     重建一次，得到该帧的 mesh + scale
+  2. 跨帧平均 scale → 一个稳定的全局尺度（刚性物体尺寸恒定 = 硬约束）
+  3. FoundationPose 在相邻重建帧之间 track，每次到新重建帧可重新锚定（校正漂移）
+
+  在动手前有个关键取舍要你定（影响实现范围）：
+
+● User answered Claude's questions:
+  ⎿  · 多帧重建 + 平均尺度的架构，先在哪个阶段落地？ → 完整周期重建（大改）
+
+● 明白——完整周期重建。这是大的架构改动，我先把设计确定下来再动手，避免改错方向。
+
+  先摸清 obj_recon 的批量重建接口和 pose_estimation 的锚定点：
+
+  Read 1 file (ctrl+o to expand)
+
+● 方案确定前的最后一块拼图：obj_recon 的 meshes.json
+  已按帧记录每个重建（entries[].index + objects[].mesh_path +
+  scale）。pose_estimation 只需按帧号找最近的重建锚点。
+
+  设计（完整周期重建）
+
+  obj_recon:  采样帧重建  [0, 15, 30, 45, 60, 75]  →
+  meshes/NNNNNN/{mesh+layout}
+                  ↓ 尺寸恒定约束
+  pose_estimation:
+    1. 收集所有重建帧的 layout scale → median = 全局稳定尺度
+    2. 每个重建帧 = 一个锚点：
+       - 帅选该帧 mesh，顶点 × 全局尺度，居中
+       - 在该帧 register（全注册，不是 track）
+       - 向后 track 到下一个锚点
+    3. 相邻锚点间用 track 衔接；锚点处重注册校正漂移
+
+  关键决策——mesh 形状用哪个：每个采样帧用自己的 mesh 形状（SAM3D
+  当帧重构），还是统一用 frame 0/某帧的形状 +
+  全局尺度？你的约束是「物体大小不变」=
+  尺度统一，但形状（薄厚、局部几何）理论上每帧 SAM3D
+  会更准。我的倾向：每锚点用该帧自己的 
+  mesh（形状最贴合当帧视角），但尺度强制用全局 
+  median——既满足尺寸恒定又利用新帧的更准几何。
+
+  先跑 obj_recon 周期重建采样帧（每 15 帧 + frame 0/28 已有，加
+  15/30/45/60/75）。这是大改的第一步，放后台：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 后台跑 obj_recon 周期重建时，先改 obj_recon CLI 支持「间隔采样」（不用手写一堆
+  --frame-index）。看 CLI 当前参数加 --every：
+  Read 1 file (ctrl+o to expand)
+
+● 加一个 --every N 采样参数（周期重建的入口），与 --frame-index 兼容：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/obj_recon/obj_recon/cli.p
+        y)
+  ⎿  Added 10 lines, removed 2 lines
+      67      rigid object's size never changes, one frame's mesh is suff
+          icient —
+      68      pose_estimation then tracks that fixed mesh every frame (th
+          e mesh supplies
+      69      metric scale; per-frame geometry depth drives the tracker).
+           Pass explicit
+      70 -    indices (or use ``--max-frames``) only to reconstruct more 
+         -frames, e.g. for                                               
+      71 -    debugging or when single-frame quality is poor."""         
+      70 +    indices (or use ``--every``) to reconstruct more frames, e.
+         +g. for                                                         
+      71 +    periodic re-anchoring or when single-frame quality is poor.
+         +"""                                                            
+      72  
+      73 +    every: int | None = None                                   
+      74 +    """Periodic sampling: reconstruct every Nth frame (0, N, 2N
+         +, ...). Used for                                               
+      75 +    periodic re-reconstruction so pose_estimation can re-anchor
+         + on fresh meshes                                               
+      76 +    and average the per-frame scale into one stable metric scal
+         +e (the rigid                                                   
+      77 +    object's size never changes, so the reproduced scales shoul
+         +d agree; their                                                 
+      78 +    median is robust to single-frame SAM3D noise). Combined wit
+         +h any explicit                                                 
+      79 +    --frame-index values (union)."""                           
+      80 +                                                               
+      81      skip_existing: bool = False
+      82      """Skip frames whose ``layout.json`` already exists in the 
+          output dir."""
+      83  
+
+❯ mesh还是要有一个统一的                                                        
+  看看有没有什么优化办法获得一个统一的更准确的mesh                              
+
+● 这条很关键——统一 mesh，而且要更准。这改变了架构。
+
+  核心问题：SAM3D 单帧重建的 mesh 各帧形状不一致（000000 extents
+  [0.184,0.140,1.0] vs 000028
+  [0.240,0.114,1.0]，不只是尺度，形状都不同），直接用单帧 mesh
+  形状会把这个不一致带进来。
+
+  要统一的更准的 mesh，思路是多帧融合/平均。但直接平均顶点不行（拓扑/顶点数不同
+  ）。可行的几条路：
+
+  先停掉后台的周期重建（方向变了，不该先跑那个）:
+
+  Listed 1 directory (ctrl+o to expand)
+
+● 后台还在跑（meshes/ 还是只有 0 和 28）。既然方向改成统一 mesh，先停掉它：
+
+● Stop Task
+  ⎿  obj_recon/.venv/bin/python -c "import obj_recon.cli; print('obj_recon
+     ok')" 2>&1 | tail -1
+     obj_recon/.venv/bin/python -m obj_recon.cli \… · stopped
+
+● 已停。现在聚焦统一更准 mesh。关键约束：多帧 SAM3D mesh
+  拓扑不同，不能直接平均顶点。各方向的现实可行性差异很大。我先看 obj_recon 现有
+  mesh 后处理里已有什么（MeshReconArgs 的选项），以及多视角融合的现实路径：
+
+  Read 1 file (ctrl+o to expand)
+
+● 在选方案前，先拿到同一个刚体在两个帧的 mesh 
+  差异有多大的硬数据——这决定「融合」是否值得 vs 直接选好帧。把 000000 和 000028
+  的 canonical mesh 做 Procrustes 对齐，看残差：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 数据说话：
+
+  - 顶点数不同（1523 vs 1598）→ 不能直接平均顶点
+  - 形状本质一致：归一化 chamfer 0.0125（1.25% of 单位对角线），误差小
+  - 差异主要在次要轴比例：x 轴 0.77×、y 轴 1.23×（薄厚的观测噪声），长轴 z
+    完全一致（1.0）
+
+  结论：两把 mesh 是同一把勺子的好 3D 
+  先验，形状高度一致，只是单帧对薄度的观测有噪声。所以方案清晰了：
+
+  统一 mesh 方案（推荐，务实）
+
+  用一个 canonical 拓扑，把多帧观测融合进去优化顶点，而不是逐帧用不同拓扑：
+
+  1. 选参考拓扑：以 alignment IoU 最高那帧的 mesh 做 canonical 骨架（拓扑固定）
+  2. 尺度恒定约束：多帧 layout scale 取 median 作为全局尺度
+  3. 多帧形状融合：把每个采样帧的 SAM3D mesh（经各自 layout pose+scale 变到
+     scene/canonical 对齐后）作为观测点云，canonical mesh
+     顶点向多帧融合的表面场做laplacian-preserving deformation（类似非刚性 ICP /
+     embedded deformation，保拓扑）
+  4. 输出一个 <name>_unified.obj（拓扑统一、形状融合多帧、尺度固定）
+
+  这正是下游 FoundationPose
+  和物理仿真都想要的形式：拓扑一致、尺度固定、形状比单帧准。
+
+  实现路径上有几个不同量级，效果/成本差异大，你定一下深度我再动手：
+
+● User answered Claude's questions:
+  ⎿  · 统一 mesh 的优化深度选哪个？ → 尽可能地避免自己写代码, 
+     看看有没有好用的开源方案来解决现在这个问题
+
+● 明白——尽量不自己写代码，用现成开源方案。
+
+  核心需求拆解：多帧 SAM3D mesh（同一把勺子、拓扑不同、形状高度一致）→
+  融合成一个统一、更准的 mesh；且要快、不手写算法。
+
+  让我盘点不需要自研的现成路径：
+
+  现成的开源选项：
+  1. Open3D（obj_recon venv 已有）：TSDF volume integration，喂多帧点云+位姿 →
+     marching cubes → 统一
+     mesh。不用自己写融合算法。纹理要重投（这是它的弱项）。
+  2. trimesh 现有 boolean/remesh：能把多 mesh 合并，但不保拓扑一致性也不够准。
+  3. SAM3D 本身就支持 multi-view：如果 SAM 3D Objects 的 pipeline
+     吃多张图（不只是单帧 RGBA）就能直接输出融合
+     mesh，这条最省——不用碰融合逻辑。这是最关键要确认的。
+
+  我必须先搞清楚 SAM3D 的 inference 
+  是否原生支持多视角输入。如果支持，根本不用融合——直接喂多帧采样图。查它的
+  inference 接口：
+
+  Listed 1 directory, ran 2 shell commands (ctrl+o to expand)
+
+● 那只是 SAM3D 内部渲染多视角（给 Gaussian→mesh 用），不是吃多张输入图。看
+  inference 的真实输入签名，确认是否单图：
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● 确认了：SAM3D 的 inference.run() 只吃单张图（image: Union[None, Image.Image, 
+  np.ndarray]）——单视角生成式重构，没有原生多帧融合。所以"喂多帧图直接得统一
+  mesh"这条路在 SAM3D 里不存在。
+
+  盘点不写算法的现实开源路径（obj_recon venv 已有
+  Open3D/trimesh/pyrender/pytorch3d）：
+
+  ┌─────────────┬─────────────────────┬───────────┬────────────────────────┐
+  │    方案     │      现成工具       │ 写代码量  │      保拓扑/纹理       │
+  ├─────────────┼─────────────────────┼───────────┼────────────────────────┤
+  │ ① 选最优帧  │ 无（纯选择）        │ ≈0        │ ✓ 完整保留             │
+  ├─────────────┼─────────────────────┼───────────┼────────────────────────┤
+  │ ② TSDF 融合 │ Open3D              │ 少（调    │ ✗                      │
+  │             │ ScalableTSDFVolume  │ API）     │ 拓扑重生成、纹理要重投 │
+  ├─────────────┼─────────────────────┼───────────┼────────────────────────┤
+  │ ③           │                     │           │                        │
+  │ 自研非刚性  │ 无现成              │ 大        │ —                      │
+  │ ICP         │                     │           │                        │
+  └─────────────┴─────────────────────┴───────────┴────────────────────────┘
+
+  先验证一个可疑点：两把 mesh chamfer 只差
+  1.25%，差异主要在薄度观测噪声。也许不需要融合，选 alignment IoU 最高的单帧 
+  mesh 就是现成最优解。查两帧的 IoU：
+
+  Ran 1 shell command (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?

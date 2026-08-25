@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vis"
+version = "0.1.0"
+description = "Browser (viser) replay + debug visualization of pipeline outputs"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "numpy",
+  "viser",
+  "mujoco>=3.4.0",
+  "trimesh",
+  "tyro>=1.0.13",
+  "loguru>=0.7.3",
+  "omegaconf",
+  # Scene replay reuses physics_opt.utils.viser_viewer (build_and_log_scene_*,
+  # log_frame). Resolved editable from ../physics_opt via [tool.uv.sources];
+  # the mujoco_warp post-sync patch hook of physics_opt does NOT fire here
+  # (hooks are project-level) — harmless, vis is CPU mujoco only.
+  "physics_opt",
+]
+
+[project.scripts]
+vis = "vis.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff", "uv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["vis"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["vis"]
+
+[tool.uv]
+required-version = ">=0.11.3"
+sources = { physics_opt = { path = "../physics_opt", editable = true } }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.ruff]
+exclude = ["pkgs", ".venv", "build", "dist"]
+line-length = 88
+lint.extend-ignore = ["E203", "E266", "E501"]

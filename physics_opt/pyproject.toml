@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "physics_opt"
+version = "0.1.0"
+description = "Sampling-based MPC physics optimization (MuJoCo Warp) for retargeted demos (do-as-i-do stage 5)"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "numpy",
+  "scipy",
+  "torch",
+  "trimesh",
+  "rtree",
+  "shapely",
+  "networkx",
+  "filelock",
+  "omegaconf",
+  "loop-rate-limiters",
+  "imageio[ffmpeg]",
+  "opencv-python",
+  "viser",
+  "plotly",
+  "tqdm",
+  "tyro>=1.0.13",
+  "loguru>=0.7.3",
+  # The mujoco_warp pin requires warp-lang ~1.10 (newer releases drop
+  # warp.context) and a matching mujoco; versions mirror the known-good env.
+  # NOTE: the pinned mujoco_warp commit predates mujoco 3.5's MjData API rename
+  # (qM -> M, dense ten_J); site-packages is patched at install time by
+  # scripts/patch_mujoco_warp.py (see [tool.uv] post-sync hook below).
+  "warp-lang==1.10.1",
+  "mujoco>=3.4.0",
+  "mujoco-warp @ git+https://github.com/google-deepmind/mujoco_warp@5d5a6450a7699e695f1767efd7715251713da2ac",
+]
+
+[project.scripts]
+physics_opt = "physics_opt.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff", "uv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["physics_opt"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["physics_opt"]
+include = ["config/**"]
+artifacts = ["config/**"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv]
+required-version = ">=0.11.3"
+
+[tool.uv.post-sync]
+commands = [
+  # re-apply the mujoco >= 3.5 MjData API compatibility patch after uv sync
+  # reinstalls mujoco_warp (see scripts/patch_mujoco_warp.py)
+  ["{python}", "scripts/patch_mujoco_warp.py"],
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.ruff]
+exclude = ["pkgs", ".venv", "build", "dist"]
+line-length = 88
+lint.select = ["E4", "E7", "E9", "F"]
+lint.ignore = ["E741", "E203", "E266", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["physics_opt"]

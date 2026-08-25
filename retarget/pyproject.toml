@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "retarget"
+version = "0.1.0"
+description = "Dexterous-hand retargeting: mink IK plus post-IK pedestal resolution (do-as-i-do stages 4-4.5)"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "numpy",
+  "scipy",
+  "trimesh",
+  "mink",
+  "mujoco==3.4.0",
+  "loop-rate-limiters",
+  "imageio[ffmpeg]",
+  "filelock",
+  "tyro>=1.0.13",
+  "loguru>=0.7.3",
+  "scene_construction",
+]
+
+[project.scripts]
+retarget = "retarget.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff", "uv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["retarget"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["retarget"]
+
+[tool.uv]
+required-version = ">=0.11.3"
+
+[tool.uv.sources]
+scene_construction = { path = "../scene_construction", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.ruff]
+exclude = ["pkgs", ".venv", "build", "dist"]
+line-length = 88
+lint.extend-ignore = ["E203", "E266", "E501"]

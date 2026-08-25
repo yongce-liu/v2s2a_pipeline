@@ -1,0 +1,1574 @@
+╭─── Claude Code v2.1.241 ─────────────────────────────────────────────────────╮
+│                                                   │ Tips for getting started │
+│                   Welcome back!                   │ Run /init to create a C… │
+│                                                   │ ──────────────────────── │
+│                      ▐▛███▛█                      │ What's new               │
+│                     ▝▜██████▀                     │ Bug fixes and reliabili… │
+│                       ▝▝ ▝▝                       │ Bug fixes and reliabili… │
+│                                                   │ Cost estimates (`/cost`… │
+│    gpt-5.6-sol-2026-07-09 · API Usage Billing     │ /release-notes for more  │
+│   /mnt/workspace/human-robot/v2r/v2s2a_pipeline   │                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ /model gpt-5.6-sol[1M]                                                        
+  ⎿  Set model to gpt-5.6-sol[1m] and saved as your default for new sessions
+
+❯ @.agent/ 现在 @obj_recon/ 支持多视角关键帧了, @pose_estimation/               
+  支持分段估计吗                                                                
+  ⎿  Listed directory .agent/
+  ⎿  Listed directory obj_recon/
+  ⎿  Listed directory pose_estimation/
+
+● Explore(检查姿态分段支持)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+● 我正在检查 pose_estimation
+  的入口参数、数据流和输出约定，确认它是否已经能直接消费 obj_recon
+  的多视角关键帧/分段结果。稍后会给出明确结论和对应代码位置。
+
+✻ Crunched for 1m 5s
+
+● Agent "检查姿态分段支持" finished · 9m 38s
+
+● 目前 pose_estimation 还不支持真正的“分段估计”或“按多视角关键帧分别估计”。
+
+  当前已有能力
+
+  它现在的模式是：
+
+  1. 输入一段完整视频的 frames.json
+  2. 使用一个融合后的 mesh
+  3. 通过单个 --init-frame 做一次 FoundationPose register
+  4. 从初始化帧：
+     - 向后正序跟踪
+     - 向前反序跟踪
+
+  对应实现位于：
+
+  - 参数定义：pose_estimation/pose_estimation/workflow.py:54
+  - 前后向帧拆分：pose_estimation/pose_estimation/workflow.py:424
+  - 初始化与正向跟踪：pose_estimation/pose_estimation/workflow.py:477
+  - 反向跟踪：pose_estimation/pose_estimation/workflow.py:501
+
+  因此，--init-frame 44 可以从第 44 帧向两边跟踪，但这仍然是一条连续 tracking 
+  链，不是把 [0, 44, 88] 分成多个区间并分别初始化。
+
+  现阶段缺少的能力
+
+  CLI 目前没有以下参数或数据结构：
+
+  - --keyframes 0 44 88
+  - --segment-start / --segment-end
+  - 多个 anchor/init frame
+  - 每段独立 register
+  - segment/view 级输出路径
+  - 从 obj_recon/view_poses.json 读取关键帧定义
+
+  虽然有 --reinit-every N，但它只是按照全局帧号取模周期性重新注册，不能精确使用
+  obj_recon 选择出的关键帧，所以不能等价替代分段支持。
+
+  参数见 pose_estimation/pose_estimation/workflow.py:54-111。
+
+  与 obj_recon 多视角模式的衔接现状
+
+  obj_recon 多视角当前会输出：
+
+  meshes/mv/<object>/<object>.obj
+  meshes/mv/<object>/<object>.glb
+  layout.json
+  view_poses.json
+
+  相关代码在 obj_recon/obj_recon/multiview.py:300-346。
+
+  其中：
+
+  - layout.json 只表达 view-0 参考位姿。
+  - view_poses.json 设计上用于保存各关键帧位姿。
+  - 但当前 MV-SAM3D 的 all_view_poses_raw 通常没有填充，因此往往只有 view-0。
+  - 注释虽然说剩余关键帧位姿由 pose_estimation tracking 补齐，但 pose_estimation
+    尚未实现针对关键帧集合的专门编排。
+
+  所以现在可以把融合 mesh 交给
+  pose_estimation，从一个初始化帧跟踪整段视频；但无法做到：
+
+  anchor k0 ── track ── midpoint
+                      midpoint ── track backward ── anchor k1
+  anchor k1 ── track ── midpoint
+  ...
+
+  这种真正的分段、多 anchor 估计。
+
+  当前输出也不适合多段独立运行
+
+  输出固定为：
+
+  outputs/<clip>/pose_estimation/
+  ├── config.json
+  ├── poses.json
+  ├── poses/
+  │   ├── 000000.txt
+  │   └── ...
+  └── vis.mp4
+
+  定义见：
+
+  - pose_estimation/pose_estimation/workflow.py:400-410
+  - pose_estimation/pose_estimation/workflow.py:526-579
+
+  路径中没有 segment_id、view_id 或 keyframe_id。如果用不同 --init-frame
+  多次运行，同一输出目录会互相覆盖。
+
+  结论
+
+  ┌───────────────────────────┬──────────┐
+  │           能力            │ 当前状态 │
+  ├───────────────────────────┼──────────┤
+  │ 单初始化帧、双向 tracking │ 支持     │
+  ├───────────────────────────┼──────────┤
+  │ 周期性 reinit             │ 支持     │
+  ├───────────────────────────┼──────────┤
+  │ 使用多视角融合 mesh       │ 可以     │
+  ├───────────────────────────┼──────────┤
+  │ 根据关键帧列表重新初始化  │ 不支持   │
+  ├───────────────────────────┼──────────┤
+  │ 指定 [start, end] 子区间  │ 不支持   │
+  ├───────────────────────────┼──────────┤
+  │ 多 anchor 分段 tracking   │ 不支持   │
+  ├───────────────────────────┼──────────┤
+  │ 自动消费 view_poses.json  │ 不支持   │
+  ├───────────────────────────┼──────────┤
+  │ 分段结果合并及冲突选择    │ 不支持   │
+  └───────────────────────────┴──────────┘
+
+  要和新的 obj_recon 多视角关键帧能力正确对接，下一步应在 pose_estimation 增加：
+
+  1. 读取 view_poses.json 或显式 --keyframes。
+  2. 每个关键帧独立 register。
+  3. 相邻关键帧之间分别前向/反向跟踪。
+  4. 在区间中点或按置信度合并两侧结果。
+  5. 最终仍输出一套连续的 poses/{frame}.txt，同时在 poses.json 记录
+     segment_id、anchor_frame 和 tracking direction。
+
+✻ Brewed for 12m 37s
+
+❯ ╭─── Claude Code v2.1.241                                                     
+  ─────────────────────────────────────────────────────╮                        
+  │                                                   │ Tips for getting        
+  started │                                                                     
+  │                   Welcome back!                   │ Run /init to create a   
+  C… │                                                                          
+  │                                                   │                         
+  ──────────────────────── │                                                    
+  │                      ▐▛███▛█                      │ What's new              
+   │                                                                            
+  │                     ▝▜██████▀                     │ Bug fixes and           
+  reliabili… │                                                                  
+  │                       ▝▝ ▝▝                       │ Bug fixes and           
+  reliabili… │                                                                  
+  │                                                   │ Cost estimates          
+  (`/cost`… │                                                                   
+  │            kimi-k3 · API Usage Billing            │ /release-notes for more 
+   │                                                                            
+  │   /mnt/workspace/human-robot/v2r/v2s2a_pipeline   │                         
+   │                                                                            
+  ╰──────────────────────────────────────────────────────────────────────────── 
+  ──╯                                                                           
+                                                                                
+                                                                                
+  ❯ @.agent/ 目前所有子流程都已经 ready, 首先更新一下 @cli.md , 之后针对        
+                                                                                
+    inputs/yellow_spoon.mp4 进行端到端测试查看最终效果                          
+                                                                                
+    ⎿  Listed directory .agent/                                                 
+    ⎿  Read cli.md (44 lines)                                                   
+                                                                                
+    Thought for 6s (ctrl+o to expand)                                           
+                                                                                
+  ● 先看一下 .agent/ 里最新的阶段状态和当前仓库结构，确认哪些子流程已 ready。   
+                                                                                
+    Thought for 22s, read 2 files, listed 1 directory, ran 2 shell commands     
+  (ctrl+o to expand)                                                            
+                                                                                
+  ● User answered Claude's questions:                                           
+    ⎿  · End-to-end 测试用单视角还是多视角 obj_recon?以及是否清空旧的           
+       outputs/yellow_spoon 全量重跑? → 多视角 MV-SAM3D (Recommended)           
+                                                                                
+    Thought for 36s (ctrl+o to expand)                                          
+                                                                                
+  ● Write(cli.md)                                                               
+    ⎿  Added 15 lines, removed 13 lines                                         
+         7                                                                      
+         8  geometry/.venv/bin/python -m geometry.cli --command video --vid     
+            eo.frames-json outputs/yellow_spoon/process/frames.json             
+         9                                                                      
+        10 -obj_recon/.venv/bin/python -m obj_recon.cli --masks-json output     
+           -s/yellow_spoon/segment/masks.json --geometry-json outputs/yello     
+           -w_spoon/geometry/geometry.json                                      
+        11 -                                                                    
+        12 -# Alternative: multi-view (MV-SAM3D). Fuses keyframes into ONE      
+           -mesh per object                                                     
+        13 -# + a view-0 metric pose. Default = 4 evenly-spaced keyframes.      
+           -Repeat the values                                                   
+        14 -# under ONE --frame-index flag (tyro keeps only the last repeat     
+           -ed flag).                                                           
+        15 -# obj_recon/.venv/bin/python -m obj_recon.cli --masks-json outp     
+           -uts/yellow_spoon/segment/masks.json --geometry-json outputs/yel     
+           -low_spoon/geometry/geometry.json --mv.enabled                       
+        10 +# Multi-view (MV-SAM3D, default): fuses 4 evenly-spaced keyfram     
+           +es into ONE                                                         
+        11 +# mesh per object + a view-0 metric pose under obj_recon/meshes     
+           +/mv/<object>/.                                                      
+        12 +obj_recon/.venv/bin/python -m obj_recon.cli --masks-json output     
+           +s/yellow_spoon/segment/masks.json --geometry-json outputs/yello     
+           +w_spoon/geometry/geometry.json --mv.enabled                         
+        13 +# Manual keyframes (first = view-0 reference); repeat the VALUE     
+           +S under ONE                                                         
+        14 +# --frame-index flag — tyro keeps only the last occurrence of a     
+           + repeated list flag:                                                
+        15  # obj_recon/.venv/bin/python -m obj_recon.cli --masks-json outp     
+            uts/yellow_spoon/segment/masks.json --geometry-json outputs/yel     
+            low_spoon/geometry/geometry.json --mv.enabled --mv.keyframe-str     
+            ategy manual --frame-index 0 44 88                                  
+        16 +# Alternative: single-view, one canonical mesh from frame 0         
+        17 +# (outputs under obj_recon/meshes/000000/<object>/):                
+        18 +# obj_recon/.venv/bin/python -m obj_recon.cli --masks-json outp     
+           +uts/yellow_spoon/segment/masks.json --geometry-json outputs/yel     
+           +low_spoon/geometry/geometry.json                                    
+        19                                                                      
+        18 -pose_estimation/.venv/bin/python -m pose_estimation.cli --frame     
+           -s-json outputs/yellow_spoon/process/frames.json --masks-json ou     
+           -tputs/yellow_spoon/segment/masks.json --mesh-path outputs/yello     
+           -w_spoon/obj_recon/meshes/000000/yellow_spoon/yellow_spoon.obj -     
+           --init-frame 0 --vis                                                 
+        19 -# Multi-view note: same --mesh-path schema works for the MV out     
+           -put — point it at                                                   
+        20 -# outputs/yellow_spoon/obj_recon/meshes/mv/yellow_spoon/yellow_     
+           -spoon.obj (the                                                      
+        21 -# sibling layout.json carries the metric scale).                    
+        20 +pose_estimation/.venv/bin/python -m pose_estimation.cli --frame     
+           +s-json outputs/yellow_spoon/process/frames.json --masks-json ou     
+           +tputs/yellow_spoon/segment/masks.json --mesh-path outputs/yello     
+           +w_spoon/obj_recon/meshes/mv/yellow_spoon/yellow_spoon.obj --ini     
+           +t-frame 0 --vis                                                     
+        21 +# Single-view note: point --mesh-path at                            
+        22 +# outputs/yellow_spoon/obj_recon/meshes/000000/yellow_spoon/yel     
+           +low_spoon.obj                                                       
+        23 +# instead (either way the sibling layout.json carries the metri     
+           +c scale).                                                           
+        24                                                                      
+        25  scene_construction/.venv/bin/python -m scene_construction.cli -     
+            -clip-root outputs/yellow_spoon                                     
+        26                                                                      
+       ...                                                                      
+        34  `outputs/yellow_spoon/scene_construction`; retarget/physics_opt     
+             default to the                                                     
+        35  same directory so they chain without extra flags). Stage-5 arti     
+            facts land in                                                       
+        36  `.../scene_construction/sharpa/bimanual/yellow_spoon/0/physics_     
+            opt/`                                                               
+        35 -(`trajectory_mjwp.npz` + resolved `config.yaml`).                   
+        36 -(derived from `frames.json`, independent of the current working     
+           - directory).                                                        
+        37 +(`trajectory_mjwp.npz` + resolved `config.yaml`). Paths are der     
+           +ived from                                                           
+        38 +`frames.json`, independent of the current working directory.        
+        39                                                                      
+        40  `--vis` renders the obj_recon mesh at each tracked pose and wri     
+            tes a single                                                        
+        41  overlay video to `outputs/yellow_spoon/pose_estimation/vis.mp4`     
+             (no per-frame                                                      
+       ...                                                                      
+        43  previews directly in VSCode / browsers / QuickTime. The mesh's      
+            metric scale is                                                     
+        44  read from the obj_recon `layout.json` next to `--mesh-path` (ov     
+            erride with                                                         
+        45  `--mesh-scale`); FoundationPose never fits cross-view scale, so     
+             it must be                                                         
+        44 -handed a metric mesh.                                               
+        46   No newline at end of file                                          
+        47 +handed a metric mesh.                                               
+                                                                                
+    Ran 1 shell command (ctrl+o to expand)                                      
+                                                                                
+  ● Now I'll run the full end-to-end pipeline. I'll go stage-by-stage; long     
+  ones                                                                          
+    (obj_recon MV, scene_construction, physics_opt) go to background with       
+                                                                                
+  ● log capture.                                                                
+                                                                                
+    Thought for 52s, listed 1 directory, ran 7 shell commands (ctrl+o to        
+  expand)                                                                       
+                                                                                
+  ● Background command "Stage 1: hand reconstruction (HaWoR)" completed (exit   
+  code                                                                          
+  0)                                                                            
+                                                                                
+  ● Background command "Stage 2: segment yellow spoon with SAM3" completed      
+  (exit                                                                         
+  code 0)                                                                       
+                                                                                
+  ● Background command "Stage 3: MoGe geometry per frame" completed (exit code  
+  0)                                                                            
+                                                                                
+  ● 两个上游 stage 都完成了。现在跑 Stage 4: obj_recon --mv.enabled(MV-SAM3D    
+    多视角融合，最重的一步）:                                                   
+                                                                                
+    Ran 3 shell commands (ctrl+o to expand)                                     
+                                                                                
+  ● 后台任务完成时会自动通知，先等通知即可。                                    
+                                                                                
+    Read 1 file, ran 4 shell commands (ctrl+o to expand)                        
+                                                                                
+  ● Background command "Stage 4: MV-SAM3D multi-view reconstruction" completed  
+  (exit code 0)                                                                 
+                                                                                
+  ● 等待 pose_estimation 完成（FoundationPose 通常要几分钟）。趁这时间确认下游  
+    scene_construction 的前提（gravity 输入来自 pose/json)。                    
+                                                                                
+    Read 1 file (ctrl+o to expand)                                              
+                                                                                
+  ● Background command "Stage 5: FoundationPose tracking with MV mesh"          
+  completed                                                                     
+  (exit code 0)                                                                 
+    ⎿  Interrupted · What should Claude do instead?                             
+                                                                                
+  ❯ 经过检测 outputs/yellow_spoon/outputs/obj_recon的形状是足够准确的, 但是从   
+                                                                                
+    outputs/yellow_spoon/pose_estimation 结果来看,                              
+  物体的大小和位置完全是错误的,                                                 
+    你先考虑 @obj_recon/ 有没有做深度对齐 决定物体的scale,                      
+                                                                                
+    之后检查是不是还有其他的bug                                                 
+                                                                                
+    ⎿  Listed directory obj_recon/                                              
+                                                                                
+    Thought for 1m 28s (ctrl+o to expand)                                       
+                                                                                
+  ● 收到——mesh 形状好但 pose_estimation                                         
+    里大小/位置全错。先对比单帧路径（已验证正确）和 MV 路径在 scale/translation 
+    上的处理差异，重点看单帧路径是否做了 MoGe 深度对齐而 MV 路径漏了。          
+                                                                                
+    Searched for 2 patterns, read 2 files (ctrl+o to expand)                    
+    ⎿  Interrupted · What should Claude do instead?                             
+   经过检测 outputs/yellow_spoon/outputs/obj_reco                               
+    n的形状是足够准确的, 但是从                                                 
+    outputs/yellow_spoon/pose_estimation 结果来看,                              
+    物体的大小和位置完全是错误的, 你先考虑                                      
+    @obj_recon/ 有没有做深度对齐 决定物体的scale,                               
+    之后检查是不是还有其他的bug                                                 
+  之后增加多段估计的能力                                                        
+  ⎿  Listed directory .agent/
+  ⎿  Read cli.md (47 lines)
+  ⎿  Listed directory obj_recon/
+
+❯ 开始修改                                                                      
+
+● 2 background agents launched (↓ to manage)
+   ├ 诊断 MV 尺度位姿
+   └ 设计多段姿态估计
+
+● 我会按这个顺序直接修改并验证：
+
+  1. 对比单视角与 MV 路径的深度对齐和 layout.json 变换，修复 mesh 的 metric
+     scale / translation。
+  2. 检查 pose_estimation 加载 mesh、应用
+     layout、深度及相机坐标转换中的其他问题。
+  3. 增加多关键帧、多段估计：
+     - 从 MV 元数据读取关键帧；
+     - 各关键帧独立 register；
+     - 相邻 anchor 之间分段 tracking；
+     - 合并为连续 poses.json；
+     - 记录每帧的 segment、anchor 和 direction。
+  4. 更新测试和 cli.md。
+  5. 先跑单元测试，再针对 yellow_spoon 重跑相关阶段并检查可视化结果。
+
+✻ Worked for 2m 19s
+
+● Agent "设计多段姿态估计" finished · 13m 48s
+
+  Read 9 files (ctrl+o to expand)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 12 lines, removed 3 lines
+      69      from the clip root (``<clip>/geometry/geometry.json``)."""
+      70  
+      71      init_frame: int = 0
+      72 -    """Reference frame index used for the initial pose registra
+         -tion. Frames                                                   
+      73 -    before it are back-propagated from the registered pose; fra
+         -mes after it                                                   
+      74 -    are tracked forward."""                                    
+      72 +    """Reference frame index used in single-anchor mode. Frames
+         + before it are                                                 
+      73 +    back-propagated from the registered pose."""               
+      74  
+      75 +    anchor_frames: list[int] | None = None                     
+      76 +    """Frames at which to register independently, supplied as o
+         +ne list (for                                                   
+      77 +    example ``--anchor-frames 0 29 59 88``). When omitted, MV k
+         +eyframes are                                                   
+      78 +    discovered from ``mv_meshes.json``; non-MV meshes fall back
+         + to init_frame."""                                             
+      79 +                                                               
+      80 +    prompt_id: str | None = None                               
+      81 +    """Object prompt whose per-prompt segmentation mask is used
+         + for                                                           
+      82 +    registration. Defaults to the object name, with underscores
+         + replaced by                                                   
+      83 +    spaces. This avoids registering against the aggregate hand+
+         +object mask."""                                                
+      84 +                                                               
+      85      object_name: str | None = None
+      86      """Object identifier recorded in the output manifest (defau
+          lts to the
+      87      mesh filename stem)."""
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 56 lines, removed 6 lines
+      187      return None
+      188  
+      189  
+      190 -def _mask_path(masks_manifest: dict, index: int) -> Path | Non
+          -e:                                                            
+      190 +def _mask_path(                                               
+      191 +    masks_manifest: dict,                                     
+      192 +    index: int,                                               
+      193 +    prompt_id: str | None = None,                             
+      194 +) -> Path | None:                                             
+      195      masks_dir = Path(masks_manifest.get("masks_dir", ""))
+      196      for entry in masks_manifest.get("entries", []):
+      193 -        if int(entry["index"]) == index:                      
+      194 -            filename = entry.get("mask_filename")             
+      195 -            if filename is None or not entry.get("has_mask"): 
+      197 +        if int(entry["index"]) != index:                      
+      198 +            continue                                          
+      199 +        mask_entry = entry                                    
+      200 +        if prompt_id is not None:                             
+      201 +            mask_entry = next(                                
+      202 +                (                                             
+      203 +                    prompt_mask                               
+      204 +                    for prompt_mask in entry.get("prompt_masks
+          +", [])                                                        
+      205 +                    if prompt_mask.get("prompt_id") == prompt_
+          +id                                                            
+      206 +                ),                                            
+      207 +                None,                                         
+      208 +            )                                                 
+      209 +            if mask_entry is None:                            
+      210                  return None
+      197 -            candidate = masks_dir / filename                  
+      198 -            return candidate if candidate.exists() else None  
+      211 +        filename = mask_entry.get("mask_filename")            
+      212 +        if filename is None or not mask_entry.get("has_mask"):
+      213 +            return None                                       
+      214 +        candidate = masks_dir / filename                      
+      215 +        return candidate if candidate.exists() else None      
+      216      return None
+      217  
+      218  
+      219 +def _find_layout_path(mesh_path: Path) -> Path | None:        
+      220 +    """Find either the MV per-object layout or legacy per-fram
+          +e layout."""                                                  
+      221 +                                                              
+      222 +    for candidate in (                                        
+      223 +        mesh_path.parent / "layout.json",                     
+      224 +        mesh_path.parent.parent / "layout.json",              
+      225 +    ):                                                        
+      226 +        if candidate.exists():                                
+      227 +            return candidate                                  
+      228 +    return None                                               
+      229 +                                                              
+      230 +                                                              
+      231 +def _resolve_anchor_frames(mesh_path: Path, requested: list[in
+          +t] | None) -> list[int]:                                      
+      232 +    """Resolve explicit anchors or MV keyframes, preserving si
+          +ngle-view behavior."""                                        
+      233 +                                                              
+      234 +    if requested is not None:                                 
+      235 +        if not requested:                                     
+      236 +            raise ValueError("--anchor-frames must contain at 
+          +least one frame.")                                            
+      237 +        return sorted(set(requested))                         
+      238 +                                                              
+      239 +    # view_poses.json may only contain view-0 in the current M
+          +V-SAM3D checkout,                                             
+      240 +    # so mv_meshes.json is the authoritative list of frames us
+          +ed for fusion.                                                
+      241 +    mv_manifest_path = mesh_path.parents[3] / "mv_meshes.json"
+      242 +    if mesh_path.parent.parent.name == "mv" and mv_manifest_pa
+          +th.exists():                                                  
+      243 +        mv_manifest = json.loads(mv_manifest_path.read_text(en
+          +coding="utf-8"))                                              
+      244 +        for obj in mv_manifest.get("objects", []):            
+      245 +            if Path(obj.get("obj", "")).expanduser().resolve()
+          + == mesh_path:                                                
+      246 +                return sorted(set(int(index) for index in obj.
+          +get("keyframes", [])))                                        
+      247 +            if obj.get("object") == mesh_path.stem:           
+      248 +                return sorted(set(int(index) for index in obj.
+          +get("keyframes", [])))                                        
+      249 +    return []                                                 
+      250 +                                                              
+      251 +                                                              
+      252  def _depth_from_geometry(frame_dir: Path) -> np.ndarray:
+      253      """Metric depth from the geometry stage's point map Z chan
+           nel.
+      254  
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 5 lines, removed 1 line
+      370              return _skipped_entry(frame)
+      371          rgb, depth, intrinsics = inputs
+      372  
+      373 -        mask_path = _mask_path(self.masks_manifest, frame.inde
+          -x)                                                            
+      373 +        mask_path = _mask_path(                               
+      374 +            self.masks_manifest,                              
+      375 +            frame.index,                                      
+      376 +            self.args.prompt_id,                              
+      377 +        )                                                     
+      378          mask = (
+      379              _load_registration_mask(mask_path, depth.shape[:2]
+           )
+      380              if mask_path is not None
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 2 lines
+      133      """``register`` / ``track`` / ``track-backward`` / ``re-re
+           gister``."""
+      134      direction: str = ""
+      135      """``forward`` / ``backward`` / ``register`` / ``skipped``
+           ."""
+      136 +    anchor_frame: int | None = None                           
+      137 +    """Registration anchor that seeded this pose, when known."
+          +""                                                            
+      138  
+      139      def to_dict(self) -> dict:
+      140          return {
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 1 line
+      145              "tracked": self.tracked,
+      146              "method": self.method,
+      147              "direction": self.direction,
+      148 +            "anchor_frame": self.anchor_frame,                
+      149          }
+      150  
+      151  
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 1 line, removed 1 line
+      365              self.video_writer.add(frame.index, vis)
+      366          return pose_filename
+      367  
+      368 -    def register_frame(self, frame) -> PoseEntry:             
+      368 +    def register_frame(self, frame, *, anchor_frame: int | Non
+          +e = None) -> PoseEntry:                                       
+      369          """Full registration; the entry carries the registered
+            pose forward."""
+      370  
+      371          inputs = self._frame_inputs(frame)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 9 lines, removed 2 lines
+      397              timestamp_sec=frame.timestamp_sec,
+      398              pose_filename=pose_filename,
+      399              tracked=True,
+      400 -            method="register",                                
+      400 +            method="register-anchor" if anchor_frame is not No
+          +ne else "register",                                           
+      401              direction="register",
+      402 +            anchor_frame=anchor_frame,                        
+      403          )
+      404  
+      404 -    def track_frame(self, frame, *, backwards: bool) -> PoseEn
+          -try:                                                          
+      405 +    def track_frame(                                          
+      406 +        self,                                                 
+      407 +        frame,                                                
+      408 +        *,                                                    
+      409 +        backwards: bool,                                      
+      410 +        anchor_frame: int | None = None,                      
+      411 +    ) -> PoseEntry:                                           
+      412          """Track from the estimator's current pose into this f
+           rame."""
+      413  
+      414          inputs = self._frame_inputs(frame)
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 1 line
+      438              tracked=True,
+      439              method="track-backward" if backwards else "track",
+      440              direction="backward" if backwards else "forward",
+      441 +            anchor_frame=anchor_frame,                        
+      442          )
+      443  
+      444  
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 2 lines, removed 3 lines
+      467      if not mesh_path.exists():
+      468          raise FileNotFoundError(f"Object mesh not found: {mesh
+           _path}")
+      469      object_name = args.object_name or mesh_path.stem
+      470 +    if args.prompt_id is None:                                
+      471 +        args.prompt_id = object_name.replace("_", " ")        
+      472  
+      471 -    if args.init_frame not in {frame.index for frame in manife
+          -st.entries}:                                                  
+      472 -        raise ValueError(f"--init-frame {args.init_frame} not 
+          -in the frame manifest.")                                      
+      473 -                                                              
+      473      clip_stem = frames_json.parent.parent.name
+      474      if args.output_root is None:
+      475          # Unified pipeline layout: derive the outputs root fro
+           m frames_json so
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 13 lines, removed 4 lines
+      491      if args.max_frames is not None:
+      492          selected = selected[: args.max_frames]
+      493  
+      494 -    init_position = next(                                     
+      495 -        i for i, frame in enumerate(selected) if frame.index =
+          -= args.init_frame                                             
+      494 +    selected_indices = {frame.index for frame in selected}    
+      495 +    resolved_anchors = _resolve_anchor_frames(mesh_path, args.
+          +anchor_frames)                                                
+      496 +    if not resolved_anchors:                                  
+      497 +        resolved_anchors = [args.init_frame]                  
+      498 +    missing_anchors = [index for index in resolved_anchors if 
+          +index not in selected_indices]                                
+      499 +    if missing_anchors:                                       
+      500 +        raise ValueError(                                     
+      501 +            f"Anchor frames not in the selected frame manifest
+          +: {missing_anchors}"                                          
+      502 +        )                                                     
+      503 +    anchors = set(resolved_anchors)                           
+      504 +    first_anchor_position = next(                             
+      505 +        i for i, frame in enumerate(selected) if frame.index =
+          += resolved_anchors[0]                                         
+      506      )
+      497 -    forward_frames = selected[init_position:]                 
+      498 -    backward_frames = [frame for frame in reversed(selected[:i
+          -nit_position])]                                               
+      507 +    backward_frames = [frame for frame in reversed(selected[:f
+          +irst_anchor_position])]                                       
+      508  
+      509      import trimesh
+      510  
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 11 lines, removed 7 lines
+      516      # scale comes from the obj_recon stage's own layout.json (
+           SAM3D's metric
+      517      # fit) unless overridden explicitly.
+      518      mesh_scale = args.mesh_scale
+      519 +    layout_path = _find_layout_path(mesh_path) if args.start_f
+          +rom_layout else None                                          
+      520      if mesh_scale is None and args.start_from_layout:
+      520 -        layout_path = mesh_path.parent.parent / "layout.json" 
+      521 -        if layout_path.exists():                              
+      522 -            layout = json.loads(layout_path.read_text(encoding
+          -="utf-8"))                                                    
+      523 -            scale_xyz = layout["objects"][0]["local_to_scene"]
+          -["scale"]                                                     
+      524 -            mesh_scale = float(np.mean(scale_xyz))            
+      525 -            logger.info(                                      
+      526 -                "[pose] mesh scale from {}: {:.4f} m/unit", la
+          -yout_path, mesh_scale                                         
+      521 +        if layout_path is None:                               
+      522 +            raise FileNotFoundError(                          
+      523 +                "No obj_recon layout.json found next to the me
+          +sh or its parent. "                                           
+      524 +                "Pass --mesh-scale explicitly or --no-start-fr
+          +om-layout."                                                   
+      525              )
+      526 +        layout = json.loads(layout_path.read_text(encoding="ut
+          +f-8"))                                                        
+      527 +        scale_xyz = layout["objects"][0]["local_to_scene"]["sc
+          +ale"]                                                         
+      528 +        mesh_scale = float(np.mean(scale_xyz))                
+      529 +        logger.info(                                          
+      530 +            "[pose] mesh scale from {}: {:.4f} m/unit", layout
+          +_path, mesh_scale                                             
+      531 +        )                                                     
+      532      if mesh_scale is not None and mesh_scale != 1.0:
+      533          mesh = mesh.copy()
+      534          mesh.vertices = mesh.vertices * mesh_scale
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 51 lines, removed 39 lines
+      558      )
+      559  
+      560      entries: list[PoseEntry] = []
+      561 +    first_anchor_pose: np.ndarray | None = None               
+      562 +    active_anchor: int | None = None                          
+      563 +    forward_ok = False                                        
+      564  
+      562 -    # Register at the init frame, then track forward.         
+      563 -    register_entry = processor.register_frame(forward_frames[0
+          -])                                                            
+      564 -    entries.append(register_entry)                            
+      565 -    forward_ok = register_entry.tracked                       
+      566 -    for frame in forward_frames[1:]:                          
+      567 -        if not forward_ok:                                    
+      568 -            entries.append(_skipped_entry(frame))             
+      569 -            continue                                          
+      570 -        is_reinit = args.reinit_every > 0 and (frame.index % a
+          -rgs.reinit_every) == 0                                        
+      571 -        if is_reinit:                                         
+      572 -            entry = processor.register_frame(frame)           
+      573 -            forward_ok = entry.tracked  # fall back to plain t
+          -racking on failure                                            
+      565 +    # Every MV keyframe is an independent registration anchor.
+          + Between anchors,                                             
+      566 +    # tracking is restarted from the latest registered pose, l
+          +imiting drift to                                              
+      567 +    # one keyframe interval while retaining one shared model i
+          +nstance.                                                      
+      568 +    for frame in selected[first_anchor_position:]:            
+      569 +        is_anchor = frame.index in anchors                    
+      570 +        is_periodic_reinit = (                                
+      571 +            args.reinit_every > 0 and (frame.index % args.rein
+          +it_every) == 0                                                
+      572 +        )                                                     
+      573 +        if is_anchor or is_periodic_reinit:                   
+      574 +            anchor = frame.index if is_anchor else active_anch
+          +or                                                            
+      575 +            entry = processor.register_frame(frame, anchor_fra
+          +me=anchor)                                                    
+      576 +            if entry.tracked:                                 
+      577 +                forward_ok = True                             
+      578 +                active_anchor = frame.index                   
+      579 +                if frame.index == resolved_anchors[0]:        
+      580 +                    first_anchor_pose = np.loadtxt(           
+      581 +                        poses_dir / entry.pose_filename       
+      582 +                    ).reshape(4, 4)                           
+      583 +            elif forward_ok:                                  
+      584 +                logger.warning(                               
+      585 +                    "[pose] anchor {} registration failed; con
+          +tinuing previous chain",                                      
+      586 +                    frame.index,                              
+      587 +                )                                             
+      588 +                entry = processor.track_frame(                
+      589 +                    frame,                                    
+      590 +                    backwards=False,                          
+      591 +                    anchor_frame=active_anchor,               
+      592 +                )                                             
+      593 +        elif forward_ok:                                      
+      594 +            entry = processor.track_frame(                    
+      595 +                frame,                                        
+      596 +                backwards=False,                              
+      597 +                anchor_frame=active_anchor,                   
+      598 +            )                                                 
+      599          else:
+      575 -            entry = processor.track_frame(frame, backwards=Fal
+          -se)                                                           
+      600 +            entry = _skipped_entry(frame)                     
+      601          entries.append(entry)
+      602  
+      578 -    # Back-propagate from the registered pose to frames before
+          - the init frame.                                              
+      579 -    # Backward tracking is only needed when init_frame > 0 (i.
+          -e. there are                                                  
+      580 -    # earlier frames); with the default init_frame=0 there is 
+          -nothing to                                                    
+      581 -    # back-propagate to, so the whole pass is skipped.        
+      603 +    # Seed the same estimator with the first anchor pose and t
+          +rack toward frame 0.                                          
+      604 +    # Reusing it avoids loading another scorer/refiner pair in
+          +to GPU memory.                                                
+      605      if not backward_frames:
+      606          logger.info(
+      584 -            "[pose] init_frame={} is the first selected frame:
+          - no backward tracking needed",                                
+      585 -            args.init_frame,                                  
+      607 +            "[pose] first anchor {} is the first selected fram
+          +e: no backward tracking needed",                              
+      608 +            resolved_anchors[0],                              
+      609          )
+      587 -    elif register_entry.tracked:                              
+      588 -        # A separate estimator keeps the forward chain's state
+          - intact; it is                                                
+      589 -        # seeded with T_init as-is and steps backward frame by
+          - frame                                                        
+      590 -        # (init-1, init-2, ...).                              
+      591 -        registered_pose = np.loadtxt(poses_dir / register_entr
+          -y.pose_filename).reshape(                                     
+      592 -            4, 4                                              
+      593 -        )                                                     
+      594 -        backward_estimator = FoundationPoseEstimator(mesh, arg
+          -s.foundationpose)                                             
+      595 -        backward_estimator.set_pose(registered_pose)          
+      596 -        backward_processor = _FrameProcessor(                 
+      597 -            args,                                             
+      598 -            backward_estimator,                               
+      599 -            geometry_manifest,                                
+      600 -            masks_manifest,                                   
+      601 -            poses_dir,                                        
+      602 -            mesh=mesh,                                        
+      603 -            video_writer=video_writer,                        
+      604 -            shared_renderer=shared_renderer,                  
+      605 -        )                                                     
+      610 +    elif first_anchor_pose is not None:                       
+      611 +        active_estimator.set_pose(first_anchor_pose)          
+      612          for frame in backward_frames:
+      607 -            entries.append(backward_processor.track_frame(fram
+          -e, backwards=True))                                           
+      613 +            entries.append(                                   
+      614 +                processor.track_frame(                        
+      615 +                    frame,                                    
+      616 +                    backwards=True,                           
+      617 +                    anchor_frame=resolved_anchors[0],         
+      618 +                )                                             
+      619 +            )                                                 
+      620      else:
+      621          for frame in backward_frames:
+      622              entries.append(_skipped_entry(frame))
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 11 lines, removed 1 line
+      627      if vis_video_path is not None:
+      628          logger.info("[pose] vis overlay video: {}", vis_video_
+           path)
+      629  
+      630 -    _write_json(stage_dir / "poses.json", _manifest_dict(args,
+          - manifest, entries))                                          
+      630 +    _write_json(                                              
+      631 +        stage_dir / "poses.json",                             
+      632 +        _manifest_dict(                                       
+      633 +            args,                                             
+      634 +            manifest,                                         
+      635 +            entries,                                          
+      636 +            anchors=resolved_anchors,                         
+      637 +            layout_path=layout_path,                          
+      638 +            mesh_scale=mesh_scale,                            
+      639 +        ),                                                    
+      640 +    )                                                         
+      641      _write_json(stage_dir / "config.json", _config_dict(args, 
+           manifest))
+      642  
+      643      tracked = sum(1 for entry in entries if entry.tracked)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 2 lines, removed 2 lines
+      642  
+      643      tracked = sum(1 for entry in entries if entry.tracked)
+      644      logger.info(
+      645 -        "[pose] Done: object={} frames={} tracked={} init_fram
+          -e={} out={}",                                                 
+      645 +        "[pose] Done: object={} frames={} tracked={} anchors={
+          +} out={}",                                                    
+      646          object_name,
+      647          len(entries),
+      648          tracked,
+      649 -        args.init_frame,                                      
+      649 +        resolved_anchors,                                     
+      650          stage_dir,
+      651      )
+      652  
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 4 lines
+      665      args: PoseEstimationVideoArgs,
+      666      manifest: FrameManifest,
+      667      entries: list[PoseEntry],
+      668 +    *,                                                        
+      669 +    anchors: list[int],                                       
+      670 +    layout_path: Path | None,                                 
+      671 +    mesh_scale: float | None,                                 
+      672  ) -> dict:
+      673      return {
+      674          "schema_version": "1.0",
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 4 lines
+      685          "mesh_path": str(args.mesh_path.expanduser().resolve()
+           ),
+      686          "object_name": args.object_name or args.mesh_path.stem
+           ,
+      687          "init_frame": args.init_frame,
+      688 +        "anchor_frames": anchors,                             
+      689 +        "prompt_id": args.prompt_id,                          
+      690          "reinit_every": args.reinit_every,
+      691 +        "layout_json": str(layout_path) if layout_path is not 
+          +None else None,                                               
+      692 +        "mesh_scale": mesh_scale,                             
+      693          "poses_dir": None,  # filled by caller layout: stage_d
+           ir/poses
+      694          "entries": [entry.to_dict() for entry in entries],
+      695      }
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 4 lines
+      716              "est_refine_iter": args.foundationpose.est_refine_
+           iter,
+      717              "track_refine_iter": args.foundationpose.track_ref
+           ine_iter,
+      718              "init_frame": args.init_frame,
+      719 +            "anchor_frames": args.anchor_frames,              
+      720 +            "prompt_id": args.prompt_id,                      
+      721              "reinit_every": args.reinit_every,
+      722 +            "mesh_scale": args.mesh_scale,                    
+      723 +            "start_from_layout": args.start_from_layout,      
+      724              "max_frames": args.max_frames,
+      725              "vis": args.vis,
+      726              "debug": args.foundationpose.debug,
+
+● Update(pose_estimation/tests/test_workflow.py)
+  ⎿  Added 2 lines
+      11  from pose_estimation.workflow import (
+      12      PoseEstimationVideoArgs,
+      13      _depth_from_geometry,
+      14 +    _find_layout_path,                                         
+      15      _geometry_frame_dir,
+      16      _mask_path,
+      17 +    _resolve_anchor_frames,                                    
+      18      load_geometry_manifest,
+      19      load_masks_manifest,
+      20  )
+
+● Update(pose_estimation/tests/test_workflow.py)
+  ⎿  Added 60 lines
+       59      assert _mask_path(manifest, 2) is None  # has_mask False
+       60  
+       61  
+       62 +def test_mask_path_lookup_by_prompt(tmp_path: Path) -> None:  
+       63 +    masks_dir = tmp_path / "masks"                            
+       64 +    object_dir = masks_dir / "yellow spoon"                   
+       65 +    object_dir.mkdir(parents=True)                            
+       66 +    (object_dir / "000000.png").write_bytes(b"")              
+       67 +    manifest = {                                              
+       68 +        "masks_dir": str(masks_dir),                          
+       69 +        "entries": [                                          
+       70 +            {                                                 
+       71 +                "index": 0,                                   
+       72 +                "mask_filename": "000000.png",                
+       73 +                "has_mask": True,                             
+       74 +                "prompt_masks": [                             
+       75 +                    {                                         
+       76 +                        "prompt_id": "yellow spoon",          
+       77 +                        "mask_filename": "yellow spoon/000000.
+          +png",                                                         
+       78 +                        "has_mask": True,                     
+       79 +                    }                                         
+       80 +                ],                                            
+       81 +            }                                                 
+       82 +        ],                                                    
+       83 +    }                                                         
+       84 +    assert _mask_path(manifest, 0, "yellow spoon") == object_d
+          +ir / "000000.png"                                             
+       85 +    assert _mask_path(manifest, 0, "missing") is None         
+       86 +                                                              
+       87 +                                                              
+       88 +def test_find_layout_path_prefers_mesh_directory(tmp_path: Pat
+          +h) -> None:                                                   
+       89 +    mesh_dir = tmp_path / "meshes" / "mv" / "object"          
+       90 +    mesh_dir.mkdir(parents=True)                              
+       91 +    mesh_path = mesh_dir / "object.obj"                       
+       92 +    mesh_path.write_text("")                                  
+       93 +    per_object = mesh_dir / "layout.json"                     
+       94 +    parent = mesh_dir.parent / "layout.json"                  
+       95 +    per_object.write_text("{}")                               
+       96 +    parent.write_text("{}")                                   
+       97 +    assert _find_layout_path(mesh_path) == per_object         
+       98 +                                                              
+       99 +                                                              
+      100 +def test_resolve_mv_anchor_frames(tmp_path: Path) -> None:    
+      101 +    object_dir = tmp_path / "obj_recon" / "meshes" / "mv" / "y
+          +ellow_spoon"                                                  
+      102 +    object_dir.mkdir(parents=True)                            
+      103 +    mesh_path = (object_dir / "yellow_spoon.obj").resolve()   
+      104 +    mesh_path.write_text("")                                  
+      105 +    (tmp_path / "obj_recon" / "mv_meshes.json").write_text(   
+      106 +        json.dumps(                                           
+      107 +            {                                                 
+      108 +                "objects": [                                  
+      109 +                    {                                         
+      110 +                        "object": "yellow_spoon",             
+      111 +                        "obj": str(mesh_path),                
+      112 +                        "keyframes": [88, 0, 29, 29, 59],     
+      113 +                    }                                         
+      114 +                ]                                             
+      115 +            }                                                 
+      116 +        )                                                     
+      117 +    )                                                         
+      118 +    assert _resolve_anchor_frames(mesh_path, None) == [0, 29, 
+          +59, 88]                                                       
+      119 +    assert _resolve_anchor_frames(mesh_path, [5, 1, 5]) == [1,
+          + 5]                                                           
+      120 +                                                              
+      121 +                                                              
+      122  def test_depth_from_geometry(tmp_path: Path) -> None:
+      123      points = np.ones((4, 5, 3), dtype=np.float32)
+      124      points[..., 2] = 0.5
+
+● Update(pose_estimation/tests/test_workflow.py)
+  ⎿  Added 2 lines
+      141          masks_json=Path("masks.json"),
+      142      )
+      143      assert args.init_frame == 0
+      144 +    assert args.anchor_frames is None                         
+      145 +    assert args.prompt_id is None                             
+      146      assert args.reinit_every == 0
+      147      assert args.max_frames is None
+      148      assert args.foundationpose.est_refine_iter == 5
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Update(scene_construction/scene_construction/motion_sources.py)
+  ⎿  Added 12 lines, removed 2 lines
+      257      # the bbox-center in metres, and scaling does not move the
+            bbox center of
+      258      # an origin-symmetric normalization — verified numerically
+            against the
+      259      # tracked trajectory).
+      260 -    layout_path = mesh_obj_path.parent.parent / "layout.json" 
+      261 -    if not layout_path.exists():                              
+      260 +    layout_path = next(                                       
+      261 +        (                                                     
+      262 +            candidate                                         
+      263 +            for candidate in (                                
+      264 +                mesh_obj_path.parent / "layout.json",         
+      265 +                mesh_obj_path.parent.parent / "layout.json",  
+      266 +            )                                                 
+      267 +            if candidate.exists()                             
+      268 +        ),                                                    
+      269 +        None,                                                 
+      270 +    )                                                         
+      271 +    if layout_path is None:                                   
+      272          raise FileNotFoundError(
+      273              f"obj_recon layout.json missing next to {mesh_obj_
+           path} — cannot "
+      274              "determine the metric mesh scale (pose_estimation 
+           applies it "
+
+● Update(cli.md)
+  ⎿  Added 5 lines, removed 1 line
+      17  # (outputs under obj_recon/meshes/000000/<object>/):
+      18  # obj_recon/.venv/bin/python -m obj_recon.cli --masks-json outp
+          uts/yellow_spoon/segment/masks.json --geometry-json outputs/yel
+          low_spoon/geometry/geometry.json
+      19  
+      20 -pose_estimation/.venv/bin/python -m pose_estimation.cli --frame
+         -s-json outputs/yellow_spoon/process/frames.json --masks-json ou
+         -tputs/yellow_spoon/segment/masks.json --mesh-path outputs/yello
+         -w_spoon/obj_recon/meshes/mv/yellow_spoon/yellow_spoon.obj --ini
+         -t-frame 0 --vis                                                
+      20 +# For an MV mesh, pose_estimation automatically registers indep
+         +endently at the                                                
+      21 +# obj_recon keyframes (0, 29, 59, 88 here), tracks each interva
+         +l, reads the                                                   
+      22 +# per-object "yellow spoon" masks, and applies the sibling layo
+         +ut.json scale.                                                 
+      23 +pose_estimation/.venv/bin/python -m pose_estimation.cli --frame
+         +s-json outputs/yellow_spoon/process/frames.json --masks-json ou
+         +tputs/yellow_spoon/segment/masks.json --mesh-path outputs/yello
+         +w_spoon/obj_recon/meshes/mv/yellow_spoon/yellow_spoon.obj --pro
+         +mpt-id "yellow spoon" --vis                                    
+      24 +# Override automatic MV anchors with: --anchor-frames 0 29 59 8
+         +8                                                              
+      25  # Single-view note: point --mesh-path at
+      26  # outputs/yellow_spoon/obj_recon/meshes/000000/yellow_spoon/yel
+          low_spoon.obj
+      27  # instead (either way the sibling layout.json carries the metri
+          c scale).
+
+● Update(pose_estimation/README.md)
+  ⎿  Added 6 lines, removed 4 lines
+      64      └── ...
+      65  ```
+      66  
+      67 -The reference frame (`--init-frame`) runs full pose registratio
+         -n                                                              
+      68 -(`est.register`); every following frame runs tracking (`est.tra
+         -ck_one`),                                                      
+      69 -reusing the networks loaded once per run. `--reinit-every N` re
+         --runs                                                          
+      70 -registration every N frames for drift recovery.                
+      67 +For an MV mesh, keyframes are discovered from `obj_recon/mv_mes
+         +hes.json` and                                                  
+      68 +run independent full registrations (`est.register`); frames bet
+         +ween consecutive                                               
+      69 +anchors run tracking (`est.track_one`). This bounds drift to on
+         +e keyframe                                                     
+      70 +interval while reusing the networks loaded once per run. For a 
+         +single-view mesh,                                              
+      71 +`--init-frame` retains the original register + bidirectional tr
+         +acking behavior.                                               
+      72 +`--reinit-every N` can add periodic registrations between expli
+         +cit anchors.                                                   
+      73  
+      74  ## Options
+      75  
+
+● Update(pose_estimation/README.md)
+  ⎿  Added 6 lines, removed 3 lines
+      79    masks for registration).
+      80  - `--geometry-json <path>` — path to the `geometry` stage `geom
+          etry.json`
+      81    (depth + intrinsics); defaults to `<clip>/geometry/geometry.j
+          son`.
+      82 -- `--init-frame <N>` — reference frame for the initial registra
+         -tion                                                           
+      83 -  (default 0).                                                 
+      84 -- `--reinit-every <N>` — re-register every N frames (default 0 
+         -= once).                                                       
+      82 +- `--init-frame <N>` — reference frame in single-anchor mode (d
+         +efault 0).                                                     
+      83 +- `--anchor-frames <N...>` — explicit registration anchors as o
+         +ne list; when                                                  
+      84 +  omitted for an MV mesh, uses that object's keyframes from `mv
+         +_meshes.json`.                                                 
+      85 +- `--prompt-id <name>` — per-object segmentation prompt used fo
+         +r registration;                                                
+      86 +  defaults to the mesh/object name with underscores replaced by
+         + spaces.                                                       
+      87 +- `--reinit-every <N>` — optionally add periodic registrations 
+         +(default 0).                                                   
+      88  - `--max-frames <N>` — cap the frames processed (smoke tests).
+      89  - `--output-root <dir>` — root under which `<clip>/pose_estimat
+          ion/` is
+      90    created (default `outputs`).
+
+  Read 5 files, ran 4 shell commands (ctrl+o to expand)
+
+● Agent "诊断 MV 尺度位姿" finished · 42m 29s
+
+● Update(obj_recon/obj_recon/multiview.py)
+  ⎿  Added 1 line
+      23  import os
+      24  import subprocess
+      25  from collections.abc import Sequence
+      26 +from copy import deepcopy                                      
+      27  from dataclasses import dataclass
+      28  from datetime import UTC, datetime
+      29  from pathlib import Path
+● Update(obj_recon/obj_recon/multiview.py)
+  ⎿  Added 1 line
+      430      for prompt_id in selected:
+      431          obj_name = _sanitize_prompt_id(prompt_id)
+      432          images, vmasks, pointmaps, used_frames = [], [], [], [
+           ]
+      433 +        pipeline._mv_pending_intrinsics.clear()               
+      434          for idx in keyframes:
+      435              entry = entry_by_idx[idx]
+      436              # mask item for this prompt in this frame
+
+● Update(obj_recon/obj_recon/multiview.py)
+  ⎿  Added 1 line, removed 1 line
+      513                  "[mv] intrinsics queue drift: queued {} views,
+            {} leftover (expected {})",
+      514                  n_queued, leftover, n_queued - len(images),
+      515              )
+      516 -            pipeline._mv_pending_intrinsics.clear()           
+      516 +        pipeline._mv_pending_intrinsics.clear()               
+      517  
+      518          mesh = result.get("glb")
+      519          if mesh is None:
+
+● Update(obj_recon/obj_recon/multiview.py)
+  ⎿  Added 35 lines
+      520              logger.warning("[mv] no mesh produced for '{}'", p
+           rompt_id)
+      521              continue
+      522  
+      523 +        # Unlike the single-view path, upstream run_multi_view
+          + does not invoke                                              
+      524 +        # layout post-optimization. Its decoded pose is theref
+          +ore only a coarse                                             
+      525 +        # network prediction and can be badly shifted in depth
+          +. Refit the fused                                             
+      526 +        # canonical mesh against view-0's metric point map and
+          + object mask using                                            
+      527 +        # the same optimizer as single-view reconstruction.   
+      528 +        if pipeline.layout_post_optimization_method is not Non
+          +e:                                                            
+      529 +            try:                                              
+      530 +                view0_inputs = result["view_ss_input_dicts"][0
+          +]                                                             
+      531 +                view0_intrinsics = torch.from_numpy(          
+      532 +                    np.load(geometry_frames[used_frames[0]].in
+          +trinsics_path).astype(                                        
+      533 +                        np.float32                            
+      534 +                    )                                         
+      535 +                )                                             
+      536 +                h0, w0 = images[0].shape[:2]                  
+      537 +                view0_intrinsics[0, :] /= w0                  
+      538 +                view0_intrinsics[1, :] /= h0                  
+      539 +                postprocessed_pose = pipeline.run_post_optimiz
+          +ation(                                                        
+      540 +                    deepcopy(mesh),                           
+      541 +                    view0_intrinsics.to(pipeline.device),     
+      542 +                    result,                                   
+      543 +                    view0_inputs,                             
+      544 +                )                                             
+      545 +                result.update(postprocessed_pose)             
+      546 +                logger.info(                                  
+      547 +                    "[mv] view-0 layout post-optimization: iou
+          +={}",                                                         
+      548 +                    result.get("iou"),                        
+      549 +                )                                             
+      550 +            except Exception:                                 
+      551 +                logger.exception(                             
+      552 +                    "[mv] layout post-optimization failed for 
+          +'{}'; refusing to "                                           
+      553 +                    "export an unaligned metric layout",      
+      554 +                    prompt_id,                                
+      555 +                )                                             
+      556 +                raise                                         
+      557 +                                                              
+      558          out_dir = meshes_dir / obj_name
+      559          out_dir.mkdir(parents=True, exist_ok=True)
+      560          glb_path = out_dir / f"{obj_name}.glb"
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 已开始修改，并已完成首轮实现：
+
+  - 修复 MV mesh 的 layout.json 查找路径。
+  - pose_estimation 改为使用目标物体的独立 mask，不再使用手和物体的聚合 mask。
+  - 自动读取 MV 的 [0, 29, 59, 88] 关键帧并分别注册，区间内 tracking。
+  - 修复 scene_construction 对 MV layout.json 的路径解析。
+  - 给 MV-SAM3D 补上与单视角相同的 view-0
+    深度/布局后优化，不再直接采用未对齐的粗略尺度与平移。
+  - 更新了 cli.md 和 pose_estimation/README.md。
+  - 当前测试结果：obj_recon 28 个、pose_estimation 16 个、scene_construction 7
+    个测试全部通过。
+
+  正在重新运行 yellow_spoon 的 MV
+  重建；完成后会继续重跑多段姿态估计并检查可视化和数值结果。
+
+✻ Churned for 49m 25s
+
+● Background command "Rerun yellow spoon MV reconstruction" completed (exit code
+0)
+
+  Searched for 4 patterns, read 7 files (ctrl+o to expand)
+
+● Update(obj_recon/obj_recon/multiview.py)
+  ⎿  Added 6 lines, removed 1 line
+      269      cfg.depth_model = None  # external geometry point maps onl
+           y
+      270  
+      271      logger.info("[mv] Loading MV-SAM3D inference pipeline from
+           : {}", args.config)
+      272 -    return instantiate(cfg)                                   
+      272 +    pipeline = instantiate(cfg)                               
+      273 +    if pipeline.layout_post_optimization_method is None:      
+      274 +        from sam3d_objects.pipeline.inference_utils import lay
+          +out_post_optimization                                         
+      275  
+      276 +        pipeline.layout_post_optimization_method = layout_post
+          +_optimization                                                 
+      277 +    return pipeline                                           
+      278  
+      279 +                                                              
+      280  def _mv_pointmap(points: np.ndarray, mask: np.ndarray, downsam
+           ple: int = 2) -> np.ndarray:
+      281      """Pack a geometry point map (H,W,3, OpenCV) as (3,H',W') 
+           for run_multi_view."""
+      282      pts = points.astype(np.float32, copy=True)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 第一次重跑暴露出一个配置问题：MV pipeline 的 layout_post_optimization_method
+  默认为 None，所以新增的对齐逻辑实际未执行，旧 layout.json 数值没有变化。
+
+  已补充显式加载与单视角相同的 layout_post_optimization，现在正在重新执行 MV
+  重建。完成后会先验证：
+
+  - 日志中确实执行 layout post-optimization；
+  - frame 0 的 layout 深度与目标 mask 的 MoGe 深度接近；
+  - metric mesh 尺寸合理；
+
+  通过后再运行新的多段 FoundationPose。
+
+✻ Brewed for 8m 12s
+
+● Background command "Rerun MV reconstruction with alignment" completed (exit
+code 0)
+
+  Searched for 1 pattern, read 2 files, ran 1 shell command (ctrl+o to expand)
+
+● MV 后优化已实际执行，但返回 iou=-1.0，表示优化器没有接受新的布局，因此
+  layout.json 仍保留原始尺度 0.145664 和原始平移。这个尺度对应约 14.6 cm
+  的勺子，数值本身合理；旧 pose 可视化的主要确定性问题仍是：
+
+  1. MV layout.json 路径错误导致尺度根本没被应用；
+  2. FoundationPose 使用了包含双手的聚合 mask，而不是 yellow spoon mask；
+  3. 仅在第 0 帧注册，之后长距离连续漂移。
+
+  现在正在用已修复的 metric scale、独立物体 mask 和 [0, 29, 59, 88]
+  多段注册重新运行姿态估计。完成后会核对每个 anchor 是否成功注册，以及 pose
+  深度和可视化效果。
+
+✻ Churned for 2m 57s
+
+● Background command "Run multisegment yellow spoon pose estimation" completed
+(exit code 0)
+
+  Searched for 1 pattern, read 2 files, ran 8 shell commands (ctrl+o to expand)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 1 line, removed 1 line
+      32  from loguru import logger
+      33  
+      34  from pose_estimation import __version__
+      35 -from pose_estimation.frames import FrameManifest, load_frame_ma
+         -nifest                                                         
+      35  from pose_estimation.foundationpose_estimator import (
+      36      FoundationPoseArgs,
+      37      FoundationPoseEstimator,
+      38  )
+      39 +from pose_estimation.frames import FrameManifest, load_frame_ma
+         +nifest                                                         
+      40  from pose_estimation.media import (
+      41      PoseVideoWriter,
+      42      load_intrinsics,
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 2 lines, removed 2 lines
+      246          mv_manifest = json.loads(mv_manifest_path.read_text(en
+           coding="utf-8"))
+      247          for obj in mv_manifest.get("objects", []):
+      248              if Path(obj.get("obj", "")).expanduser().resolve()
+            == mesh_path:
+      249 -                return sorted(set(int(index) for index in obj.
+          -get("keyframes", [])))                                        
+      249 +                return sorted({int(index) for index in obj.get
+          +("keyframes", [])})                                           
+      250              if obj.get("object") == mesh_path.stem:
+      251 -                return sorted(set(int(index) for index in obj.
+          -get("keyframes", [])))                                        
+      251 +                return sorted({int(index) for index in obj.get
+          +("keyframes", [])})                                           
+      252      return []
+      253  
+      254  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(obj_recon/obj_recon/multiview.py)
+  ⎿  Added 1 line, removed 1 line
+      115                  "-of", "csv=p=0",
+      116                  str(video),
+      117              ],
+      118 -            capture_output=True, text=True, timeout=120,      
+      118 +            capture_output=True, text=True, timeout=120, check
+          +=False,                                                       
+      119          )
+      120      except (OSError, subprocess.SubprocessError) as exc:
+      121          logger.warning("[mv] ffprobe failed ({exc}); falling b
+           ack to even", exc=exc)
+
+● Update(obj_recon/obj_recon/multiview.py)
+  ⎿  Removed 2 lines
+      217      # while a geometry intrinsics is queued (``_mv_skip_infer`
+           ` is True inside
+      218      # the call above), return it instead of running MoGe's rec
+           over_focal_shift
+      219      # (which NaNs on z+shift=0 for MoGe point maps). pop() con
+           sumes in order.
+      220 -    import sam3d_objects.pipeline.inference_pipeline_pointmap 
+          -as ipm                                                        
+      221 -                                                              
+      220      # compute_pointmap does a bare call ``infer_intrinsics_fro
+           m_pointmap(...)``
+      221      # inside pkgs/MV-SAM3D's inference_pipeline_pointmap modul
+           e. Bare calls bind
+      222      # via the module's globals ONLY (class attrs are not consu
+           lted), so we patch
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 4 lines
+      493  
+      494      selected_indices = {frame.index for frame in selected}
+      495      resolved_anchors = _resolve_anchor_frames(mesh_path, args.
+           anchor_frames)
+      496 +    if args.anchor_frames is None:                            
+      497 +        resolved_anchors = [                                  
+      498 +            index for index in resolved_anchors if index in se
+          +lected_indices                                                
+      499 +        ]                                                     
+      500      if not resolved_anchors:
+      501          resolved_anchors = [args.init_frame]
+      502      missing_anchors = [index for index in resolved_anchors if 
+           index not in selected_indices]
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 已经完成修改，并用 yellow_spoon 实际重跑验证。
+
+  修复内容
+
+  1. 修复 MV mesh 尺度未应用
+
+  根因是 MV 与单视角的 layout.json 位置不同：
+
+  - MV：mesh_path.parent/layout.json
+  - 单视角：mesh_path.parent.parent/layout.json
+
+  旧代码只检查第二种路径，因此 MV mesh 没有乘上 0.145664 的米制缩放。
+
+  现在两种布局都会正确识别，并且缺少 layout
+  时不再静默使用错误单位，而是明确报错：
+
+  - pose_estimation/pose_estimation/workflow.py
+  - scene_construction/scene_construction/motion_sources.py
+
+  实际日志确认：
+
+  mesh scale .../meshes/mv/yellow_spoon/layout.json: 0.1457 m/unit
+  tracking in metric units: mesh extent 0.146 m
+
+  当前 mesh 尺寸：
+
+  canonical extent: [0.1781, 0.1587, 1.0002]
+  metric extent:    [0.0259, 0.0231, 0.1457] m
+
+  即勺子长度约 14.6 cm，尺度合理。
+
+  2. 修复 FoundationPose 使用错误 mask
+
+  之前 pose estimation 使用的是 segment/masks/000000.png 聚合 mask，其中包含：
+
+  - 左手
+  - 右手
+  - yellow spoon
+
+  这会严重影响 FoundationPose 注册。
+
+  现在新增：
+
+  --prompt-id "yellow spoon"
+
+  并读取：
+
+  segment/masks/yellow spoon/<frame>.png
+
+  默认会根据 mesh 名称推导，例如 yellow_spoon.obj 自动映射为 yellow spoon。
+
+  3. 增加多段估计
+
+  MV mesh 现在会自动从 obj_recon/mv_meshes.json 读取实际关键帧。本次识别为：
+
+  [0, 29, 59, 88]
+
+  执行方式为：
+
+  register 0  → track 1..28
+  register 29 → track 30..58
+  register 59 → track 60..87
+  register 88
+
+  每个关键帧独立执行完整注册，限制长序列漂移。模型实例仍然复用，避免重复加载网络
+  和额外占用显存。
+
+  也支持手工覆盖：
+
+  --anchor-frames 0 29 59 88
+
+  poses.json 现在为每帧记录：
+
+  {
+    "method": "register-anchor",
+    "direction": "register",
+    "anchor_frame": 29
+  }
+
+  4. 补充 MV 布局后优化
+
+  确认了 MV-SAM3D 原始 run_multi_view() 没有像单视角一样执行 layout
+  post-optimization。现在 MV wrapper 会显式调用同一个优化器。
+
+  本次优化器运行成功，但返回：
+
+  iou=-1.0
+
+  表示候选优化没有被接受，因此保留了原始 layout。由于 FoundationPose
+  本身重新执行每个关键帧的 metric-depth registration，最终 pose 并不直接采用这个
+  layout translation；layout 主要用于 mesh metric scale。
+
+  yellow_spoon 实测结果
+
+  89 帧全部成功：
+
+  tracked 89 / 89
+  anchors [0, 29, 59, 88]
+  mesh_scale 0.145664
+  prompt yellow spoon
+
+  关键帧 pose translation：
+
+  ┌────────┬──────────────────────────┐
+  │ Anchor │   Pose translation XYZ   │
+  ├────────┼──────────────────────────┤
+  │      0 │ [0.0256, 0.1361, 0.4049] │
+  ├────────┼──────────────────────────┤
+  │     29 │ [0.0282, 0.1210, 0.3989] │
+  ├────────┼──────────────────────────┤
+  │     59 │ [0.0894, 0.0180, 0.6215] │
+  ├────────┼──────────────────────────┤
+  │     88 │ [0.0977, 0.0780, 0.5780] │
+  └────────┴──────────────────────────┘
+
+  前三个 anchor 的 pose depth 与 mask 内 MoGe 中值深度差约 6–8 mm：
+
+  ┌────────┬───────────────┬───────────┬───────────┐
+  │ Anchor │ MoGe 中值深度 │ Pose 深度 │   差值    │
+  ├────────┼───────────────┼───────────┼───────────┤
+  │      0 │      0.4117 m │  0.4049 m │ -0.0068 m │
+  ├────────┼───────────────┼───────────┼───────────┤
+  │     29 │      0.4065 m │  0.3989 m │ -0.0076 m │
+  ├────────┼───────────────┼───────────┼───────────┤
+  │     59 │      0.6281 m │  0.6215 m │ -0.0065 m │
+  ├────────┼───────────────┼───────────┼───────────┤
+  │     88 │      0.5187 m │  0.5780 m │ +0.0594 m │
+  └────────┴───────────────┴───────────┴───────────┘
+
+  投影包围框 IoU：
+
+  ┌────────┬───────┐
+  │ Anchor │  IoU  │
+  ├────────┼───────┤
+  │      0 │ 0.840 │
+  ├────────┼───────┤
+  │     29 │ 0.880 │
+  ├────────┼───────┤
+  │     59 │ 0.869 │
+  ├────────┼───────┤
+  │     88 │ 0.295 │
+  └────────┴───────┘
+
+  所以整体尺度和位置问题已修正，前三个 anchor 对齐良好；最后一帧仍是明显较弱的独
+  立注册结果，可能来自末帧遮挡、细长物体姿态歧义或该帧 mask/depth
+  质量。它现在不会再把早期 tracking 漂移误认为成功，但后续可以增加 anchor
+  注册质量门控，在独立注册差于上一段 tracking 时保留 tracking 结果。
+
+  可视化已经更新：
+
+  outputs/yellow_spoon/pose_estimation/vis.mp4
+
+  视频为 89 帧、约 2.97 秒、1.5 MB。
+
+  验证
+
+  全部通过：
+
+  pose_estimation:    16 passed
+  obj_recon:          28 passed
+  scene_construction:  7 passed
+  ruff:               passed
+  git diff --check:   passed
+
+  cli.md 和 pose_estimation/README.md 也已更新为新的 MV 自动多段命令。
+
+✻ Crunched for 12m 34s

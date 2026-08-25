@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scene_construction"
+version = "0.1.0"
+description = "Hand-object demo preprocessing and MuJoCo scene construction (do-as-i-do stages 1-3)"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "numpy",
+  "scipy",
+  "trimesh",
+  "rtree",
+  "shapely",
+  "networkx",
+  "coacd",
+  "filelock",
+  "mujoco==3.4.0",
+  "loop-rate-limiters",
+  "tyro>=1.0.13",
+  "loguru>=0.7.3",
+  "geocalib",
+  "kornia",
+  "torch==2.10.0+cu128",
+  "torchvision==0.25.0+cu128",
+]
+
+[project.scripts]
+scene_construction = "scene_construction.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff", "uv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["scene_construction"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["scene_construction"]
+
+[tool.uv]
+required-version = ">=0.11.3"
+
+[tool.uv.sources]
+geocalib = { git = "https://github.com/cvg/GeoCalib", rev = "97b8968e7798a66bf04fcf791fb535624241bda7" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources.torch]
+index = "pytorch-cu128"
+
+[tool.uv.sources.torchvision]
+index = "pytorch-cu128"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.ruff]
+exclude = ["pkgs", ".venv", "build", "dist"]
+line-length = 88
+lint.extend-ignore = ["E203", "E266", "E501", "C408", "SIM115"]

@@ -1,0 +1,946 @@
+╭─── Claude Code v2.1.241 ─────────────────────────────────────────────────────╮
+│                                                │ Tips for getting started    │
+│                  Welcome back!                 │ Run /init to create a CLAU… │
+│                                                │ ─────────────────────────── │
+│                     ▐▛███▛█                    │ What's new                  │
+│                    ▝▜██████▀                   │ Bug fixes and reliability … │
+│                      ▝▝ ▝▝                     │ Bug fixes and reliability … │
+│                                                │ Cost estimates (`/cost`, s… │
+│       ox-alpha-free · API Usage Billing        │ /release-notes for more     │
+│   /…/human-robot/v2r/v2s2a_pipeline/geometry   │                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ /model ox-alpha-free[1M]                                                      
+  ⎿  Set model to ox-alpha-free[1m] and saved as your default for new sessions
+
+❯ 参考 @process/ 和 @segment/ 的设计风格 写一个 几何/点云/深度  的子包,         
+  主要调用pkgs/MoGe , 可以在uv虚拟环境里安装, 你可以调用 pkgs/MoGe 的 pyproject 
+  toml,  之后在 geometry  中调用安装, 其余的 pkgs/MoGe  文件尽可能地不要修改,   
+  如果需要修改的时候 可以进行继承 在本项目中实现, 此外                          
+  你可以参考/home/yongce/workspace/human-robot/v2r/do-as-i-do 中是怎么调用 moge 
+   的脚本                                                                       
+  ⎿  Listed directory process/
+  ⎿  Listed directory segment/
+
+  Thought for 2m 31s, searched for 3 patterns, read 13 files, listed 6 directories, ran 6 shell commands (ctrl+o to expand)
+
+● 我已经了解整体情况了。我先检查一下测试风格，然后进行实现。
+
+  Thought for 2m 16s, read 1 file, ran 5 shell commands (ctrl+o to expand)
+
+● 检查点是一个 v2 风格的模型（包含 encoder/neck/heads，没有 refiner —— 符合
+  do-as-i-do 的 moge.model.v2.MoGeModel.from_pretrained）。现在我来检查一下测试
+  fixture helper，然后编写这个包。
+
+  Thought for 1m 20s, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● 研究已完成。现在我将按照 segment 的布局编写 geometry 包。关键发现如下：
+
+  - 位于 weights/moge/model.pt 的检查点是一个 v2 风格的 MoGe 模型（包含
+    encoder/neck/points/mask/normal/scale heads，无 refiner）—— 这与 do-as-i-do
+    通过 moge.model.v2.MoGeModel.from_pretrained
+    加载的检查点相同，因此默认版本为 v2。
+  - do-as-i-do 的调用模式（get_pointmap_dir.py）：加载一次，逐帧运行
+    model.infer，反归一化内参（K[0,0]*W
+    等），保存点云图和内参以供下游使用（HaWoR）。
+
+● Write(pyproject.toml)
+  ⎿  Wrote 58 lines to pyproject.toml
+       1 [build-system]
+       2 requires = ["hatchling"]
+       3 build-backend = "hatchling.build"
+       4 
+       5 [project]
+       7 version = "0.1.0"
+       8 description = "MoGe monocular geometry (point map / depth / norm
+         als) for EgoDataPipe selected frames"
+       9 readme = "README.md"
+      10 requires-python = ">=3.10,<3.14"
+     … +50 lines (ctrl+o to expand)
+
+● Write(geometry/__init__.py)
+  ⎿  Wrote 15 lines to geometry/__init__.py
+       1 """Shared helpers for the geometry package."""
+       2 
+       3 __version__ = "0.1.0"
+       5 from geometry.device import resolve_torch_device, set_cuda_devic
+         e_if_indexed
+       6 from geometry.media import load_rgb_image, save_depth_exr, save_
+         mask, save_points_ply
+       8 __all__ = [
+       9     "load_rgb_image",
+      10     "resolve_torch_device",
+     … +7 lines (ctrl+o to expand)
+
+● Write(geometry/device.py)
+  ⎿  Wrote 24 lines to geometry/device.py
+       1 """Device helpers for the geometry package."""
+       2 
+       3 from __future__ import annotations
+       4 
+       5 import torch
+       6 
+       7 
+       8 def resolve_torch_device(device: str) -> torch.device:
+       9     if device == "auto":
+      10         if torch.cuda.is_available():
+     … +17 lines (ctrl+o to expand)
+
+● Write(geometry/media.py)
+  ⎿  Wrote 96 lines to geometry/media.py
+       1 """Image, depth, and point-cloud I/O helpers."""
+       2 
+       3 from __future__ import annotations
+       4 
+       5 import os
+       7 # MoGe's own scripts enable OpenEXR support the same way before 
+         importing cv2.
+       8 os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+       9 
+      10 from pathlib import Path
+     … +95 lines (ctrl+o to expand)
+
+● 现在是 MoGe wrapper（继承，无需修改 pkgs/MoGe）：
+
+● Write(geometry/moge_model.py)
+  ⎿  Wrote 177 lines to geometry/moge_model.py
+       1 """Thin wrapper around the vendored ``pkgs/MoGe`` model.
+       2 
+         eline lives
+       4 here: loading a local checkpoint, per-frame inference, and conve
+         rting the
+         the format
+       6 downstream stages such as HaWoR expect, matching do-as-i-do's
+       7 ``get_pointmap_dir.py``).
+       9 
+      10 from __future__ import annotations
+     … +193 lines (ctrl+o to expand)
+
+● Write(geometry/frames.py)
+  ⎿  Wrote 93 lines to geometry/frames.py
+       1 """Loading the ``process`` stage frame manifest (``frames.json``
+         )."""
+       2 
+       3 from __future__ import annotations
+       4 
+       6 from dataclasses import dataclass
+       7 from pathlib import Path
+       8 
+       9 
+      10 @dataclass(frozen=True)
+     … +88 lines (ctrl+o to expand)
+
+● 现在我来编写工作流——单图像模式和视频模式，仿照 segment 的输出布局：
+
+● Write(geometry/workflow.py)
+  ⎿  Wrote 357 lines to geometry/workflow.py
+       1 """MoGe geometry estimation: single image and frame-by-frame vid
+         eo modes.
+       2 
+       4 
+       5 .. code-block:: text
+       6 
+       7     outputs/<clip>/geometry/
+       9     ├── geometry.json    # per-frame manifest (depth / points / 
+         intrinsics paths)
+      10     └── frames/
+     … +378 lines (ctrl+o to expand)
+
+  Thought for 14s (ctrl+o to expand)
+
+● 我写了一些不太严谨的地方（在 _frame_outputs 中处理 ply 的方式，以及 manifest
+  中的一行错误代码）。我来清理一下：
+
+● Update(geometry/workflow.py)
+  ⎿  Added 6 lines, removed 13 lines
+      130      frame_rgb: np.ndarray,
+      131      frame_dir: Path,
+      132      args_moge: MogeArgs,
+      133 +    save_ply: bool,                                           
+      134      vis_dir: Path | None,
+      135      index: int,
+      136  ) -> dict:
+     ...
+      149              frame_dir / "mask.png",
+      150              args_moge.overwrite,
+      151          )
+      151 -                                                              
+      152 -    colors = frame_rgb if args_moge.apply_mask else None      
+      153 -    if args_moge.save_ply if hasattr(args_moge, "save_ply") el
+          -se False:                                                     
+      152 +    if save_ply:                                              
+      153 +        # Masked-out pixels are inf in the point map; the writ
+          +er drops them.                                                
+      154          save_points_ply(
+      155 -            result.points,                                    
+      155 +            result.points if result.mask is None else None,   
+      156              frame_rgb,
+      157              frame_dir / "pointcloud.ply",
+      158              args_moge.overwrite,
+      159          )
+      160 -    elif getattr(args_moge, "_video_save_ply", False):        
+      161 -        save_points_ply(                                      
+      162 -            result.points,                                    
+      163 -            colors,                                           
+      164 -            frame_dir / "pointcloud.ply",                     
+      165 -            args_moge.overwrite,                              
+      166 -        )                                                     
+      160  
+      161      vis_filename = None
+      162      if vis_dir is not None:
+      163 +        from PIL import Image                                 
+      164 +                                                              
+      165          vis_filename = f"{FRAME_DIRNAME_PATTERN.format(index)}
+           _depth_vis.png"
+      166          vis_path = vis_dir / vis_filename
+      167          if not vis_path.exists() or args_moge.overwrite:
+      168              vis_path.parent.mkdir(parents=True, exist_ok=True)
+      174 -            from PIL import Image                             
+      175 -                                                              
+      169              Image.fromarray(colorize_depth(result.depth)).save
+           (vis_path)
+      170  
+      171      return {
+
+● Update(geometry/workflow.py)
+  ⎿  Added 1 line, removed 2 lines
+      150              args_moge.overwrite,
+      151          )
+      152      if save_ply:
+      153 -        # Masked-out pixels are inf in the point map; the writ
+          -er drops them.                                                
+      153          save_points_ply(
+      155 -            result.points if result.mask is None else None,   
+      154 +            result.points,                                    
+      155              frame_rgb,
+      156              frame_dir / "pointcloud.ply",
+      157              args_moge.overwrite,
+
+● Update(geometry/workflow.py)
+  ⎿  Added 1 line
+      198          frame_rgb=frame_rgb,
+      199          frame_dir=output_dir,
+      200          args_moge=args,
+      201 +        save_ply=True,                                        
+      202          vis_dir=output_dir / "vis" if args.overwrite else outp
+           ut_dir / "vis",
+      203          index=0,
+      204      )
+
+● Update(geometry/workflow.py)
+  ⎿  Added 1 line
+      255              frame_rgb=frame_rgb,
+      256              frame_dir=frame_dir,
+      257              args_moge=args.moge,
+      258 +            save_ply=args.save_ply,                           
+      259              vis_dir=vis_dir,
+      260              index=frame.index,
+      261          )
+
+● Update(geometry/workflow.py)  ⎿  Added 6 lines, removed 1 line
+      310          "frame_format": manifest.format,
+      311          "frame_count": manifest.frame_count,
+      312          "processed_count": len(entries),
+      313 -        "frames_dir": str((args.output_root.expanduser().resol
+          -ve()).name and ""),                                           
+      313 +        "frames_dir": str(                                    
+      314 +            args.output_root.expanduser().resolve()           
+      315 +            / clip_stem_of(args)                              
+      316 +            / "geometry"                                      
+      317 +            / "frames"                                        
+      318 +        ),                                                    
+      319          "moge_version": args.moge.version,
+      320          "entries": [entry.to_dict() for entry in entries],
+      321      }
+
+● 那个 clip_stem_of 是个失误 —— 让我重新整理一下 _manifest_dict，改为接收
+  frames_out_dir：
+
+● Update(geometry/workflow.py)
+  ⎿  Added 1 line
+      298      manifest: FrameManifest,
+      299      args: GeometryVideoArgs,
+      300      entries: list[GeometryEntry],
+      301 +    frames_out_dir: Path,                                     
+      302  ) -> dict:
+      303      return {
+      304          "schema_version": "1.0",
+
+● Update(geometry/workflow.py)
+  ⎿  Added 1 line, removed 6 lines
+      311          "frame_format": manifest.format,
+      312          "frame_count": manifest.frame_count,
+      313          "processed_count": len(entries),
+      314 -        "frames_dir": str(                                    
+      315 -            args.output_root.expanduser().resolve()           
+      316 -            / clip_stem_of(args)                              
+      317 -            / "geometry"                                      
+      318 -            / "frames"                                        
+      319 -        ),                                                    
+      314 +        "frames_dir": str(frames_out_dir),                    
+      315          "moge_version": args.moge.version,
+      316          "entries": [entry.to_dict() for entry in entries],
+      317      }
+
+● Update(geometry/workflow.py)
+  ⎿  Added 4 lines, removed 1 line
+      275              result.points.shape,
+      276          )
+      277  
+      278 -    _write_json(stage_dir / "geometry.json", _manifest_dict(ma
+          -nifest, args, entries))                                       
+      278 +    _write_json(                                              
+      279 +        stage_dir / "geometry.json",                          
+      280 +        _manifest_dict(manifest, args, entries, frames_out_dir
+          +),                                                            
+      281 +    )                                                         
+      282      _write_json(stage_dir / "config.json", _config_dict(args, 
+           manifest))
+      283  
+      284      logger.info(
+
+● 现在我来处理 CLI：
+
+● Write(geometry/cli.py)
+  ⎿  Wrote 83 lines to geometry/cli.py
+      1 """Command-line entry point for the geometry package.
+      2 
+      3 Two modes, dispatched with ``--command``:
+      4 
+      5 - ``single``: MoGe geometry for one image.
+      6 - ``video``:  frame-by-frame geometry for a whole video, reading 
+        the
+      7   ``process`` stage's ``frames.json``.
+      8 
+      9 Usage:
+     … +81 lines (ctrl+o to expand)
+
+● 现在开始测试。我将使用一个伪造的模型（模拟
+  MogeModel.infer_image）来测试工作流，这样就不需要 GPU/权重文件了：
+
+● Write(tests/test_workflow.py)
+  ⎿  Wrote 184 lines to tests/test_workflow.py
+       1 """Tests for the video-mode (frame-by-frame) geometry workflow."
+         ""
+       2 
+       3 from __future__ import annotations
+       4 
+       6 from pathlib import Path
+       7 
+       8 import cv2
+       9 import numpy as np
+      10 import pytest
+     … +195 lines (ctrl+o to expand)
+
+● 上次测试是遗留代码，请将其删除：
+
+● Update(tests/test_workflow.py)
+  ⎿  Removed 6 lines
+      176          run_video_geometry(
+      177              GeometryVideoArgs(frames_json=frames_json, max_fra
+           mes=-1),
+      178          )
+      179 -                                                              
+      180 -                                                              
+      181 -def test_frame_colors_roundtrip(tmp_path: Path) -> None:      
+      182 -    rgb = np.full((4, 4, 3), 128, dtype=np.uint8)             
+      183 -    loaded = load_rgb_image.__wrapped__(tmp_path / "missing.pn
+          -g") if False else None                                        
+      184 -    assert loaded is None or True                             
+
+● Update(tests/test_workflow.py)
+  ⎿  Removed 1 line
+       9  import numpy as np
+      10  import pytest
+      11  
+      12 -from geometry.media import load_rgb_image                      
+      12  from geometry.moge_model import MogeFrameResult, MogeModel
+      13  from geometry.workflow import (
+      14      GeometryVideoArgs,
+
+● Write(tests/test_media.py)
+  ⎿  Wrote 85 lines to tests/test_media.py
+       1 """Tests for the media helpers and the intrinsics conversion."""
+       2 
+       3 from __future__ import annotations
+       4 
+       5 from pathlib import Path
+       6 
+       7 import cv2
+       8 import numpy as np
+       9 import pytest
+      10 from PIL import Image
+     … +81 lines (ctrl+o to expand)
+
+● Write(tests/test_moge_model.py)
+  ⎿  Wrote 24 lines to tests/test_moge_model.py
+      1 """Tests for the MogeArgs validation and checkpoint resolution (n
+        o GPU needed)."""
+      2 
+      3 from __future__ import annotations
+      4 
+      5 from pathlib import Path
+      6 
+      7 import pytest
+      8 
+      9 from geometry.moge_model import MogeArgs, MogeModel
+     … +17 lines (ctrl+o to expand)
+
+● 现在我来同步环境——这会安装 MoGe（包含其 git 依赖项），可能需要一些时间：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 在它运行的同时，我来编写 README：
+
+● Write(README.md)
+  ⎿  Wrote 90 lines to README.md
+      1 # geometry
+      2 
+      3 MoGe monocular geometry estimation (point map / depth / normals /
+      4 for the `v2r_pipeline`. Two modes:
+      5 
+      6 - **single** — estimate geometry for one image.
+      7 - **video** — frame-by-frame geometry for a whole video, reading 
+      8   `process` stage's `frames.json` (the model is loaded once and r
+        eused for
+      9   every frame).
+     … +101 lines (ctrl+o to expand)
+
+● Background command "uv sync geometry package (installs MoGe)" completed (exit
+code 0)
+
+  Thought for 38s, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● MoGe 自身的 pyproject.toml 强制要求使用其 pytorch-cu130 索引，这与我们设置的
+  cu128 索引冲突。由于 geometry 有自己独立的 venv，最简单的修复方法是将 geometry
+  的 torch 与 MoGe 的 cu130 索引对齐：
+
+● Update(pyproject.toml)
+  ⎿  Added 5 lines, removed 2 lines
+      16    "tyro>=1.0.13",
+      17    "loguru>=0.7.3",
+      18    "moge",
+      19 -  "torch==2.10.0+cu128",                                       
+      20 -  "torchvision==0.25.0+cu128",                                 
+      19 +  # MoGe's own [tool.uv] pins torch to the pytorch-cu130 index,
+         + and uv merges                                                 
+      20 +  # index choices across path dependencies — so this env uses c
+         +u130 rather                                                    
+      21 +  # than segment's cu128.                                      
+      22 +  "torch==2.10.0+cu130",                                       
+      23 +  "torchvision==0.25.0+cu130",                                 
+      24  ]
+      25  
+      26  [project.scripts]
+
+● Update(pyproject.toml)
+  ⎿  Added 4 lines, removed 4 lines
+      42  # The vendored Microsoft MoGe checkout; never modified in place
+          .
+      43  # Any behavior we need on top of it lives in geometry.moge_mode
+          l.
+      44  moge = { path = "../pkgs/MoGe", editable = true }
+      45 -torch = { index = "pytorch-cu128" }                            
+      46 -torchvision = { index = "pytorch-cu128" }                      
+      45 +torch = { index = "pytorch-cu130" }                            
+      46 +torchvision = { index = "pytorch-cu130" }                      
+      47  
+      48  [[tool.uv.index]]
+      49 -name = "pytorch-cu128"                                         
+      50 -url = "https://download.pytorch.org/whl/cu128"                 
+      49 +name = "pytorch-cu130"                                         
+      50 +url = "https://download.pytorch.org/whl/cu130"                 
+      51  explicit = true
+      52  
+      53  [tool.pytest.ini_options]
+
+● Update(README.md)
+  ⎿  Added 3 lines, removed 1 line
+      18  uv sync
+      19  ```
+      20  
+      21 -Requires CUDA >= 12.8 (PyTorch cu128 wheels).                  
+      21 +Requires CUDA >= 13.0 (PyTorch cu130 wheels — MoGe's own `pypro
+         +ject.toml`                                                     
+      22 +pins its torch index to cu130, so this env follows it rather th
+         +an segment's                                                   
+      23 +cu128).                                                        
+      24  
+      25  ## Checkpoint
+      26  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 在同步进行时，我来检查一下工作流文件，看看是否还有遗留问题：
+  Thought for 8s, read 1 file (ctrl+o to expand)
+
+● 一些清理工作 —— 移除未使用的常量，修复单模式下的 vis_dir 表达式，并修正
+  docstring：
+
+● Update(geometry/workflow.py)
+  ⎿  Removed 1 line
+      41  from geometry.moge_model import MogeArgs, MogeFrameResult, Moge
+          Model
+      42  
+      43  FRAME_DIRNAME_PATTERN = "{:06d}"
+      44 -DEPTH_VIS_FILENAME = "depth_vis.png"                           
+      44  
+      45  
+      46  @dataclass
+
+● Update(geometry/workflow.py)
+  ⎿  Added 1 line, removed 1 line
+      198          frame_dir=output_dir,
+      199          args_moge=args,
+      200          save_ply=True,
+      201 -        vis_dir=output_dir / "vis" if args.overwrite else outp
+          -ut_dir / "vis",                                               
+      201 +        vis_dir=output_dir / "vis",                           
+      202          index=0,
+      203      )
+      204      _write_json(
+
+● Update(geometry/workflow.py)
+  ⎿  Added 2 lines, removed 2 lines
+      13          │   ├── mask.png         # valid-pixel mask
+      14          │   ├── points.npy       # camera-space point map (H, W
+          , 3)
+      15          │   ├── intrinsics.npy   # denormalized 3x3 camera intr
+          insics
+      16 -        │   ├── pointcloud.ply   # colored point cloud         
+      17 -        │   └── depth_vis.png    # only when --vis is on       
+      16 +        │   └── pointcloud.ply   # only with --save-ply        
+      17          └── ...
+      18 +    └── vis/                 # colorized depth per frame, only 
+         +with --vis                                                     
+      19  """
+      20  
+      21  from __future__ import annotations
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Monitor(geometry uv sync completion/errors)
+  ⎿  Monitor started · task b40u0i6a9 · timeout 600s
+
+● 在等待的同时，我先检查一下 geometry 包中的 ruff 配置，并确认没有语法问题：
+
+  Ran 2 shell commands (ctrl+o to expand)
+  ⎿  Error editing file
+
+● Update(geometry/moge_model.py)
+  ⎿  Added 1 line, removed 1 line
+       9  
+      10  from __future__ import annotations
+      11  
+      12 -from dataclasses import dataclass, field                       
+      12 +from dataclasses import dataclass                              
+      13  from pathlib import Path
+      14  
+      15  import numpy as np
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Ruff 检查已通过。现在正在等待 uv sync 完成后再运行测试。
+
+✻ Churned for 20m 38s
+
+● Background command "Retry uv sync with cu130 torch index" completed (exit code
+0)
+
+  Read 1 file (ctrl+o to expand)
+
+● Stop Task
+  ⎿  tail -f /tmp/claude-1000/-mnt-workspace-human-robot-v2r-v2s2a-pipeline
+     /f30e27f0-44a9-4d5c-839b-d31e2aac6144/tasks/bigg6v551.output | grep -E
+     --line-buffered "In… · stopped
+
+  Thought for 13s (ctrl+o to expand)
+
+● 同步失败：git 无法访问 github.com 以获取 utils3d-moge（这是 MoGe
+  的一个依赖项）。我来检查一下网络和代理情况：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Git 现在可以正常工作了（之前出现了瞬时故障）。正在重试同步：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 在同步运行期间（torch cu130 wheel 下载量约为 1 GB），我先检查一下 pkgs/MoGe
+  是否有本地缓存，或者 do-as-i-do 环境中是否已经包含了这些 git
+  依赖，以备我们需要回退时使用：
+
+  Read 1 file, ran 4 shell commands (ctrl+o to expand)
+
+● Background command "Retry uv sync geometry (installs MoGe deps)" completed
+(exit code 0)
+
+● 同步成功 — MoGe 及其 git 依赖项已安装。现在我来运行测试：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(geometry/__init__.py)
+  ⎿  Added 8 lines, removed 1 line
+       3  __version__ = "0.1.0"
+       4  
+       5  from geometry.device import resolve_torch_device, set_cuda_devi
+          ce_if_indexed
+       6 -from geometry.media import load_rgb_image, save_depth_exr, save
+         -_mask, save_points_ply                                         
+       6 +from geometry.media import (                                   
+       7 +    colorize_depth,                                            
+       8 +    load_rgb_image,                                            
+       9 +    save_depth_exr,                                            
+      10 +    save_mask,                                                 
+      11 +    save_points_ply,                                           
+      12 +)                                                              
+      13  
+      14  __all__ = [
+      15 +    "colorize_depth",                                          
+      16      "load_rgb_image",
+      17      "resolve_torch_device",
+      18      "save_depth_exr",
+
+  Thought for 18s, ran 1 shell command (ctrl+o to expand)
+
+● 两个问题：OpenCV 5.0 丢失了 EXR 写入器（MoGe 需要已知的可用的 4.x
+  版本），以及我的 ply 测试将二进制 PLY 当作文本读取。正在修复这两个问题：
+  ⎿  Error editing file  ⎿  Error editing file
+
+● Update(tests/test_media.py)
+  ⎿  Added 4 lines, removed 3 lines
+      41      save_points_ply(points, colors, out, overwrite=True)
+      42  
+      43      assert out.exists()
+      44 -    text = out.read_text(encoding="utf-8", errors="ignore")    
+      45 -    assert "vertex" in text                                    
+      44 +    header = out.read_bytes()[:512].decode("ascii", errors="ign
+         +ore")                                                          
+      45 +    assert header.startswith("ply")                            
+      46 +    assert "format binary_little_endian" in header             
+      47      # 20 points minus the one non-finite vertex.
+      47 -    assert f"{4 * 5 - 1}" in out.read_text(encoding="utf-8")   
+      48 +    assert "element vertex 19" in header                       
+      49  
+      50  
+      51  def test_colorize_depth_invalid_pixels_black() -> None:
+
+● Update(pyproject.toml)
+  ⎿  Added 2 lines, removed 1 line
+      11  dependencies = [
+      12    # MoGe itself declares "numpy>=2"; keep aligned instead of pi
+          nning 1.x.
+      13    "numpy>=2",
+      14 -  "opencv-python-headless>=4.8",                               
+      14 +  "opencv-python-headless>=4.8,<5",                            
+      15 +  # ^ 4.x is the known-good series with the OpenEXR writer; 5.0
+         + dropped it.                                                   
+      16    "pillow>=10.0.0",
+      17    "tyro>=1.0.13",
+      18    "loguru>=0.7.3",
+
+  Thought for 26s, ran 3 shell commands (ctrl+o to expand)
+
+● EXR 的读写没问题——我的测试对返回的二维数组进行了错误的索引（loaded[...,0]
+  会选中一列）。正在修复测试：
+  ⎿  Error editing file
+
+● Update(tests/test_media.py)
+  ⎿  Added 1 line, removed 1 line
+      21      loaded = cv2.imread(str(out), cv2.IMREAD_UNCHANGED)
+      22      assert loaded is not None
+      23      assert loaded.dtype == np.float32
+      24 -    np.testing.assert_allclose(loaded[..., 0], depth, rtol=1e-5
+         -)                                                              
+      24 +    np.testing.assert_allclose(loaded.reshape(depth.shape), dep
+         +th, rtol=1e-5)                                                 
+      25  
+      26  
+      27  def test_save_mask_no_overwrite(tmp_path: Path) -> None:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 所有 11 个测试均已通过。现在进行真正的冒烟测试 —— 加载实际的 MoGe
+  模型并在真实图像上进行推理，以验证整个链路：
+
+  Listed 2 directories (ctrl+o to expand)
+
+● yellow_spoon 已经有一个真实的 process/frames.json。正在对其运行视频模式：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Monitor(MoGe smoke test progress)
+  ⎿  Monitor started · task bkiso1l5k · timeout 600s
+
+● Background command "Smoke test: MoGe on 2 real frames" completed (exit code 0)
+  ⎿  Invalid tool parameters
+
+● Monitor event: "MoGe smoke test progress"
+
+● Stop Task
+  ⎿  tail -f /tmp/claude-1000/-mnt-workspace-human-robot-v2r-v2s2a-pipeline
+     /f30e27f0-44a9-4d5c-839b-d31e2aac6144/tasks/bq0lpi8o6.output | grep -E
+     --line-buffered "Do… · stopped
+
+  Thought for 20s, ran 1 shell command (ctrl+o to expand)
+
+● 一切运行正常——在真实 1080p 帧上实现了完整的 GPU 链路，深度范围为合理的
+  0.30–1.25 m，内参 fx≈985。存在一个约定上的偏差：我的默认 output_root 指向了
+  geometry/outputs/，而不是像 segment 那样指向仓库根目录的 outputs/。正在修复：
+  ⎿  Error editing file
+
+● Update(README.md)
+  ⎿  Added 4 lines
+      71      └── ...
+      72  ```
+      73  
+      74 +(The smoke-test artifacts under `geometry/outputs/` were writte
+         +n before the                                                   
+      75 +default was aligned with `process`/`segment`; fresh runs land i
+         +n the                                                          
+      76 +top-level `outputs/`.)                                         
+      77 +                                                               
+      78  Downstream stages read `geometry.json` rather than guessing fil
+          enames. The
+      79  denormalized intrinsics follow the do-as-i-do convention consum
+          ed by e.g.
+      80  HaWoR: `fx = K[0,0] * W`, `fy = K[1,1] * H`, `cx = K[0,2] * W`,
+
+● Update(geometry/workflow.py)
+  ⎿  Added 1 line, removed 1 line
+      50      frames_json: Path
+      51      """Path to the ``process`` stage's ``frames.json`` (the fra
+          me manifest)."""
+      52  
+      53 -    output_root: Path = Path(__file__).parents[1] / "outputs"  
+      53 +    output_root: Path = Path(__file__).parents[2] / "outputs"  
+      54      """Root under which ``<clip_stem>/geometry/`` is created.""
+          "
+      55  
+      56      vis: bool = True
+
+● 现在我来清理 smoke-test 输出（它们位于 geometry/outputs/
+  中，且路径错误），并重新运行测试以确认没有发生回归问题：
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● geometry 子包已完成，并已使用真实的 GPU 数据进行了端到端验证。
+
+  完成情况
+
+  目录结构（完全对齐 segment 的风格）：
+
+  geometry/
+  ├── pyproject.toml        # hatchling + uv, editable 安装 ../pkgs/MoGe
+  ├── README.md
+  ├── geometry/
+  │   ├── __init__.py       # 共享 helper 导出
+  │   ├── device.py         # resolve_torch_device /
+  set_cuda_device_if_indexed（同 segment）
+  │   ├── media.py          # 图像/EXR 深度/PLY 点云 I/O + depth 可视化
+  │   ├── frames.py         # 读取 process 阶段 frames.json（同 segment）
+  │   ├── moge_model.py     # MoGe 包装层 ★ 继承式调用，不改 pkgs/MoGe
+  │   ├── workflow.py       # single / video 双模式，输出 config.json +
+  geometry.json
+  │   └── cli.py            # tyro --command single|video（同 segment.cli）
+  └── tests/                # 11 个测试，全部通过；ruff 干净
+
+  关键设计点：
+
+  - 不修改 pkgs/MoGe — moge_model.py 只通过官方 API
+    调用（import_model_class_by_version(...).from_pretrained() +
+    model.infer()），管线特有的逻辑（checkpoint 校验、去归一化内参、numpy
+    转换）全部在本包实现。
+  - 参考 do-as-i-do：其 get_pointmap_dir.py 是“加载一次、逐帧推理、保存 pointmap
+    + 去归一化内参”的模式，video 模式照此设计。我检查了
+    weights/moge/model.pt，它是 v2 结构（无 refiner），所以默认 version="v2"。
+  - 输出布局镜像 segment：outputs/<clip>/geometry/{config.json, geometry.json, 
+    frames/000000/{depth.exr, mask.png, points.npy, intrinsics.npy, 
+    pointcloud.ply}, vis/}，下游读 geometry.json 不猜文件名。内参去归一化遵循
+    do-as-i-do/HaWoR 约定。
+
+  两个环境注意项：
+
+  1. torch 用 cu130 而不是 segment 的 cu128 — MoGe 自己的 pyproject.toml 把
+     torch 锁定在 pytorch-cu130 索引，uv 合并路径依赖的索引选择时冲突，geometry
+     独立 venv 就跟随了 cu130（README 有说明）。
+  2. opencv 锁 <5 — OpenCV 5.0 移除了 EXR writer，MoGe 输出 depth.exr 需要 4.x。
+
+  真机验证：用 yellow_spoon 现有 frames.json 在 CUDA 上跑通 2
+  帧（1080p），深度范围 0.30–1.25 m、fx≈985、mask/ply/vis
+  全部落盘正确。测试期间产生的错位输出已清理。
+
+  用法示例：
+  cd geometry && uv sync
+  uv run python -m geometry.cli --command video \
+    --video.frames-json outputs/yellow_spoon/process/frames.json \
+    --video.max-frames 2 --video.save-ply
+
+✻ Worked for 10m 1s
+
+❯ ➜  v2s2a_pipeline git:(main) ✗ cd geometry && uv sync                         
+  uv run python -m geometry.cli --command video \                               
+    --video.frames-json outputs/yellow_spoon/process/frames.json \              
+    --video.max-frames 2 --video.save-ply                                       
+  Resolved 115 packages in 1ms                                                  
+  Checked 101 packages in 0.78ms                                                
+  Traceback (most recent call last):                                            
+    File "<frozen runpy>", line 198, in _run_module_as_main                     
+    File "<frozen runpy>", line 88, in _run_code                                
+    File                                                                        
+  "/mnt/workspace/human-robot/v2r/v2s2a_pipeline/geometry/geometry/cli.py",     
+  line 83, in <module>                                                          
+      main()                                                                    
+      ~~~~^^                                                                    
+    File                                                                        
+  "/mnt/workspace/human-robot/v2r/v2s2a_pipeline/geometry/geometry/cli.py",     
+  line 78, in main                                                              
+      run_video_geometry(args.video)                                            
+      ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^                                            
+    File "/mnt/workspace/human-robot/v2r/v2s2a_pipeline/geometry/geometry/workf 
+  low.py", line 225, in run_video_geometry                                      
+      manifest = load_frame_manifest(frames_json)                               
+    File                                                                        
+  "/mnt/workspace/human-robot/v2r/v2s2a_pipeline/geometry/geometry/frames.py",  
+  line 62, in load_frame_manifest                                               
+      raise FileNotFoundError(f"frames.json not found: {frames_json}")          
+  FileNotFoundError: frames.json not found: /mnt/workspace/human-robot/v2r/v2s2 
+  a_pipeline/geometry/outputs/yellow_spoon/process/frames.json                  
+  ➜  geometry git:(main) ✗                                                      
+
+  Thought for 15s (ctrl+o to expand)
+
+● 这是因为相对路径 outputs/...
+  是从当前目录（geometry/）解析的，而清单文件实际上位于仓库根目录的 outputs/
+  下。我来修改加载器，将相对路径回退到仓库根目录，这样从仓库根目录或从 geometry/
+  内部调用都可以工作：
+● Update(geometry/workflow.py)
+  ⎿  Added 20 lines, removed 1 line
+      215      return GeometrySingleOutputs(output_dir=output_dir, result
+           =result)
+      216  
+      217  
+      218 +def _resolve_frames_json(frames_json: Path) -> Path:          
+      219 +    """Resolve ``frames_json``, falling back to repo-root-rela
+          +tive paths.                                                   
+      220 +                                                              
+      221 +    A bare ``outputs/<clip>/process/frames.json`` works both w
+          +hen invoked                                                   
+      222 +    from the repository root and from inside ``geometry/``.   
+      223 +    """                                                       
+      224 +    frames_json = frames_json.expanduser()                    
+      225 +    if frames_json.exists():                                  
+      226 +        return frames_json.resolve()                          
+      227 +    repo_root = Path(__file__).parents[2]                     
+      228 +    candidate = (repo_root / frames_json).resolve()           
+      229 +    if candidate.exists():                                    
+      230 +        return candidate                                      
+      231 +    raise FileNotFoundError(                                  
+      232 +        f"frames.json not found: {frames_json} "              
+      233 +        f"(also tried {candidate})"                           
+      234 +    )                                                         
+      235 +                                                              
+      236 +                                                              
+      237  def run_video_geometry(args: GeometryVideoArgs) -> GeometryVid
+           eoOutputs:
+      238      """Estimate geometry for every frame in a ``process`` mani
+           fest."""
+      239  
+      240      if args.max_frames is not None and args.max_frames < 0:
+      241          raise ValueError("--max-frames must be >= 0.")
+      242  
+      224 -    frames_json = args.frames_json.expanduser().resolve()     
+      243 +    frames_json = _resolve_frames_json(args.frames_json)      
+      244      manifest = load_frame_manifest(frames_json)
+      245  
+      246      clip_stem = frames_json.parent.parent.name
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 已修复。问题在于相对路径 outputs/...
+  是从当前目录（geometry/）解析的，而不是从仓库根目录。
+
+  修复方式：workflow.py 新增 _resolve_frames_json() — 相对路径先按调用者目录找，
+  找不到就回退到仓库根目录再试一次，所以现在无论在仓库根还是 geometry/
+  里运行，--video.frames-json outputs/yellow_spoon/process/frames.json
+  都能工作；绝对路径不受影响，找不到时报错会同时提示两个尝试过的位置。
+
+  用你原来的命令原样重跑验证通过：
+
+  - 2 帧推理完成（CUDA，~0.5s/帧）
+  - 输出正确落在顶层 outputs/yellow_spoon/geometry/（不再写到 geometry/outputs/
+    下）
+  - 每帧产物齐全：depth.exr / mask.png / points.npy / intrinsics.npy / 
+    pointcloud.ply
+  - 11 个测试 + ruff 全部通过
+
+✻ Crunched for 1m 47s
+
+❯ 不要有这种resolve, 给我正确的命令就可以                                       
+
+  Thought for 25s (ctrl+o to expand)
+
+● Update(geometry/workflow.py)
+  ⎿  Added 1 line, removed 20 lines
+      215      return GeometrySingleOutputs(output_dir=output_dir, result
+           =result)
+      216  
+      217  
+      218 -def _resolve_frames_json(frames_json: Path) -> Path:          
+      219 -    """Resolve ``frames_json``, falling back to repo-root-rela
+          -tive paths.                                                   
+      220 -                                                              
+      221 -    A bare ``outputs/<clip>/process/frames.json`` works both w
+          -hen invoked                                                   
+      222 -    from the repository root and from inside ``geometry/``.   
+      223 -    """                                                       
+      224 -    frames_json = frames_json.expanduser()                    
+      225 -    if frames_json.exists():                                  
+      226 -        return frames_json.resolve()                          
+      227 -    repo_root = Path(__file__).parents[2]                     
+      228 -    candidate = (repo_root / frames_json).resolve()           
+      229 -    if candidate.exists():                                    
+      230 -        return candidate                                      
+      231 -    raise FileNotFoundError(                                  
+      232 -        f"frames.json not found: {frames_json} "              
+      233 -        f"(also tried {candidate})"                           
+      234 -    )                                                         
+      235 -                                                              
+      236 -                                                              
+      218  def run_video_geometry(args: GeometryVideoArgs) -> GeometryVid
+           eoOutputs:
+      219      """Estimate geometry for every frame in a ``process`` mani
+           fest."""
+      220  
+      221      if args.max_frames is not None and args.max_frames < 0:
+      222          raise ValueError("--max-frames must be >= 0.")
+      223  
+      243 -    frames_json = _resolve_frames_json(args.frames_json)      
+      224 +    frames_json = args.frames_json.expanduser().resolve()     
+      225      manifest = load_frame_manifest(frames_json)
+      226  
+      227      clip_stem = frames_json.parent.parent.name
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 已移除 fallback 逻辑，恢复为直接 resolve() 相对路径。测试和 ruff 通过。
+
+  正确命令（在仓库根目录运行）：
+
+  cd /mnt/workspace/human-robot/v2r/v2s2a_pipeline
+  uv run --project geometry python -m geometry.cli --command video \
+    --video.frames-json outputs/yellow_spoon/process/frames.json \
+    --video.max-frames 2 --video.save-ply
+
+  或者在 geometry/ 目录里用绝对路径：
+
+  cd geometry
+  uv run python -m geometry.cli --command video \
+    --video.frames-json ../outputs/yellow_spoon/process/frames.json \
+    --video.max-frames 2 --video.save-ply
+
+  相对路径按当前工作目录解析，和其它 stage 的行为一致。
+
+✻ Churned for 1m 1s
+
+※ recap: geometry 子包已完成：MoGe 点云/深度/法线推理，测试和真机验证都通过，路径 fallback 也按你的要求移除了。下一步只需在仓库根目录用 uv run --project geometry 的命令跑视频推理。 (disable recaps in /config)

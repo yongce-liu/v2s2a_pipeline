@@ -1,0 +1,83 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pose_estimation"
+version = "0.1.0"
+description = "FoundationPose 6D object pose estimation and tracking for v2s2a_pipeline"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "numpy>=1.26",
+  "opencv-python>=4.8.0",
+  "pillow>=10.0.0",
+  "tyro>=1.0.13",
+  "loguru>=0.7.3",
+  "trimesh>=4.0.0",
+  "foundationpose",
+  # GPU 扩展用 torch_packages_builder 的预编译 wheel(PEP 503 index,
+  # 见下方 [[tool.uv.index]] torch-pkgs-builder);版本后缀需同时匹配
+  # torch 小版本 + CUDA + Python ABI,这里锁定 pt2.8.0cu128 cp312。
+  "pytorch3d==0.7.9+d9839a9pt2.8.0cu128",
+  "nvdiffrast==0.4.0+253ac4fpt2.8.0cu128",
+  "torch==2.8.0+cu128",
+  "torchvision==0.23.0+cu128",
+]
+
+[project.scripts]
+pose_estimation = "pose_estimation.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0", "ruff", "uv"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pose_estimation"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["pose_estimation"]
+
+[tool.uv]
+required-version = ">=0.11.3"
+index-strategy = "unsafe-best-match"
+
+# FoundationPose declares pyopengl/pyopengl-accelerate >=3.1, which resolves to
+# 3.1.0. That release ships a broken glGenTextures ctypes handler that crashes
+# pyrender under headless EGL (ctypes.ArgumentError in texture._add_to_context)
+# whenever it uploads a textured mesh. >=3.1.5 fixes the array-type handler.
+override-dependencies = [
+  "pyopengl>=3.1.9",
+  "pyopengl-accelerate>=3.1.9",
+]
+
+[tool.uv.sources]
+# The vendored NVlabs/FoundationPose checkout; never modified in place.
+# Behavior specific to this pipeline lives in pose_estimation.foundationpose_estimator
+# (subclassing / wrapping), so upstream stays clean.
+foundationpose = { path = "../pkgs/FoundationPose", editable = true }
+pytorch3d = { index = "torch-pkgs-builder" }
+nvdiffrast = { index = "torch-pkgs-builder" }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# Prebuilt GPU-extension wheels (pytorch3d / nvdiffrast / ...) keyed to
+# specific torch+CUDA+Python combos. https://miropsota.github.io/torch_packages_builder/
+[[tool.uv.index]]
+name = "torch-pkgs-builder"
+url = "https://miropsota.github.io/torch_packages_builder"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["."]
+
+[tool.ruff]
+exclude = ["pkgs", ".venv", "build", "dist"]
+line-length = 88
+lint.extend-ignore = ["E203", "E266", "E501"]

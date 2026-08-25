@@ -1,0 +1,179 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..45707c8
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,96 @@
++[build-system]
++requires = ["hatchling"]
++build-backend = "hatchling.build"
++
++[project]
++name = "hawor"
++version = "0.1.0"
++description = "HaWoR hand reconstruction, packaged with all internal top-level modules under one namespace"
++readme = "README.md"
++requires-python = ">=3.10,<3.11"
++license = { text = "Non-commercial (see license.txt)" }
++dependencies = [
++  "numpy==1.26.4",
++  "opencv-python==4.11.0.86",
++  "pillow>=10.0.0",
++  "torch==2.8.0+cu128",
++  "torchvision==0.23.0+cu128",
++  "pytorch-lightning==2.2.4",
++  "pytorch3d @ git+https://github.com/facebookresearch/pytorch3d.git@stable",
++  "smplx==0.1.28",
++  "chumpy @ git+https://github.com/mattloper/chumpy",
++  "yacs",
++  "timm==1.0.26",
++  "einops==0.8.2",
++  "xtcocotools",
++  "pandas",
++  "hydra-core",
++  "hydra-submitit-launcher",
++  "hydra-colorlog",
++  "pyrootutils",
++  "rich",
++  "webdataset",
++  "ultralytics==8.4.36",
++  "pulp",
++  "supervision",
++  "pycocotools",
++  "joblib",
++  "natsort",
++  # torch-scatter wheels are torch-specific and do not build cleanly under
++  # uv's isolation; HaWoR uses it only in training paths — leave to operators.
++  "evo",
++  "pytorch-minimize",
++  "mmengine==0.10.4",
++  "HTML4Vision",
++  "plyfile",
++  "aitviewer==1.13.0",
++  "easydict",
++  "loguru",
++  "dill",
++  "lapx",
++  "moderngl-window==2.4.6",
++  "scikit-image",
++  "scipy",
++  "tqdm",
++  "roma",
++  "setuptools<81",
++  # DROID-SLAM/lietorch/droid-backends/torch-scatter/bpy only needed for
++  # training/SLAM paths; their builds are custom CUDA or binary-heavy. The
++  # v2s2a pipeline runs with --static-camera=T so leave them out of the
++  # uv-managed default. (Restore for full HaWoR training if needed.)
++]
++
++# NOTE: source layout. HaWoR's internal code resolves imports through
++# top-level packages named ``lib``, ``hawor``, ``infiller``, ``scripts``.
++# Several of those names (``lib`` in particular) collide with wheel contents
++# of other third-party distributions, so this wheel instead ships everything
++# under one unique namespace (``haworpkg``) via symlinks maintained by
++# scripts/refresh_haworpkg.py, and lets ``hawor.pth`` put that container
++# directory on ``sys.path`` so HaWoR's original imports keep working.
++
++[tool.hatch.metadata]
++allow-direct-references = true
++
++[tool.hatch.build.targets.wheel]
++packages = [
++  "haworpkg",
++]
++
++[tool.hatch.build.targets.wheel.force-include]
++"hawor_assets/pth/hawor.pth" = "hawor.pth"
++
++[tool.uv]
++required-version = ">=0.11.3"
++index-strategy = "unsafe-best-match"
++
++[tool.uv.sources]
++torch = { index = "pytorch-cu128" }
++torchvision = { index = "pytorch-cu128" }
++
++[tool.uv.extra-build-dependencies]
++chumpy = ["pip"]
++
++[[tool.uv.index]]
++name = "pytorch-cu128"
++url = "https://download.pytorch.org/whl/cu128"
++explicit = true
+diff --git a/scripts/refresh_haworpkg.py b/scripts/refresh_haworpkg.py
+new file mode 100644
+index 0000000..83f45c4
+--- /dev/null
++++ b/scripts/refresh_haworpkg.py
+@@ -0,0 +1,71 @@
++"""Regenerate the ``haworpkg/`` symlink tree.
++
++Run after cloning or after adding/removing any top-level HaWoR package.
++
++Usage::
++
++    python scripts/refresh_haworpkg.py
++"""
++
++from __future__ import annotations
++
++import os
++import shutil
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++PKG = ROOT / "haworpkg"
++
++# Top-level HaWoR packages that the wheel ships under the haworpkg namespace.
++TREES = ("lib", "hawor", "infiller", "scripts", "thirdparty")
++FILES = ("demo.py", "app.py", "demo_pytorch3d.py")
++
++
++def main() -> None:
++    PKG.mkdir(exist_ok=True)
++
++    init = PKG / "__init__.py"
++    if not init.exists():
++        init.write_text(
++            '"""Namespace shim for the assembled HaWoR tree."""\n\n'
++        )
++
++    existing = {entry.name for entry in PKG.iterdir() if entry.name != "__init__.py"}
++    wanted = set(TREES) | {name for name in FILES if (ROOT / name).exists()}
++
++    for name in sorted(existing - wanted):
++        target = PKG / name
++        if target.is_symlink() or target.is_file():
++            target.unlink()
++        else:
++            shutil.rmtree(target)
++
++    for name in sorted(wanted):
++        src = ROOT / name
++        dst = PKG / name
++        if dst.is_symlink():
++            if dst.resolve() == src.resolve():
++                continue
++            dst.unlink()
++        elif dst.exists():
++            shutil.rmtree(dst) if dst.is_dir() else dst.unlink()
++
++        if name in FILES and src.is_file():
++            shutil.copy2(src, dst)
++        else:
++            os.symlink(os.path.relpath(src, PKG), dst)
++
++    # The wheel force-includes this .pth hook so the haworpkg container
++    # directory lands on sys.path at interpreter startup.
++    pth_dir = ROOT / "hawor_assets" / "pth"
++    pth_dir.mkdir(parents=True, exist_ok=True)
++    (pth_dir / "hawor.pth").write_text(
++        "import os, sys; _pkg = os.path.join(os.path.dirname(__file__), "
++        "'haworpkg'); sys.path.insert(0, _pkg) if os.path.isdir(_pkg) else None\n"
++    )
++
++    print(f"refreshed {sorted(wanted)}")
++
++
++if __name__ == "__main__":
++    main()

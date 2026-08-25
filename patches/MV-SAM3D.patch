@@ -1,0 +1,255 @@
+diff --git a/sam3d_objects/model/backbone/tdfy_dit/renderers/gaussian_render.py b/sam3d_objects/model/backbone/tdfy_dit/renderers/gaussian_render.py
+index c041714..408f12f 100755
+--- a/sam3d_objects/model/backbone/tdfy_dit/renderers/gaussian_render.py
++++ b/sam3d_objects/model/backbone/tdfy_dit/renderers/gaussian_render.py
+@@ -69,7 +69,7 @@ def render(
+     bg_color: torch.Tensor,
+     scaling_modifier=1.0,
+     override_color=None,
+-    backend="inria",
++    backend="gsplat",
+ ):
+     """
+     Render the scene.
+@@ -230,7 +230,7 @@ class GaussianRenderer:
+                 "far": None,
+                 "ssaa": 1,
+                 "bg_color": "random",
+-                "backend": "inria",
++                "backend": "gsplat",
+             }
+         )
+         self.rendering_options.update(rendering_options)
+diff --git a/sam3d_objects/model/backbone/tdfy_dit/utils/render_utils.py b/sam3d_objects/model/backbone/tdfy_dit/utils/render_utils.py
+index c7d8514..0510817 100644
+--- a/sam3d_objects/model/backbone/tdfy_dit/utils/render_utils.py
++++ b/sam3d_objects/model/backbone/tdfy_dit/utils/render_utils.py
+@@ -74,7 +74,7 @@ def render_frames(
+         renderer.rendering_options.far = options.get("far", 1.6)
+         renderer.rendering_options.bg_color = options.get("bg_color", (0, 0, 0))
+         renderer.rendering_options.ssaa = options.get("ssaa", 1)
+-        renderer.rendering_options.backend = options.get("backend", "inria")
++        renderer.rendering_options.backend = options.get("backend", "gsplat")
+         renderer.pipe.kernel_size = kwargs.get("kernel_size", 0.1)
+         renderer.pipe.use_mip_gaussian = True
+     elif isinstance(sample, MeshExtractResult):
+@@ -137,6 +137,6 @@ def render_gaussian_color_stay_in_device(
+     renderer.rendering_options.far = options.get("far", 1.6)
+     renderer.rendering_options.bg_color = options.get("bg_color", (0, 0, 0))
+     renderer.rendering_options.ssaa = options.get("ssaa", 1)
+-    renderer.rendering_options.backend = options.get("backend", "inria")
++    renderer.rendering_options.backend = options.get("backend", "gsplat")
+     renderer.pipe.kernel_size = kwargs.get("kernel_size", 0.1)
+     renderer.pipe.use_mip_gaussian = True
+@@ -159,7 +159,7 @@ def render_video(
+     num_frames=300,
+     r=2,
+     fov=40,
+-    backend="inria",
++    backend="gsplat",
+     **kwargs,
+ ):
+     yaws = torch.linspace(0, 2 * 3.1415, num_frames)
+diff --git a/sam3d_objects/pipeline/inference_pipeline.py b/sam3d_objects/pipeline/inference_pipeline.py
+index 583646b..f00b048 100644
+--- a/sam3d_objects/pipeline/inference_pipeline.py
++++ b/sam3d_objects/pipeline/inference_pipeline.py
+@@ -296,9 +296,10 @@ class InferencePipeline:
+         return get_pose_decoder(pose_decoder_name)
+ 
+     def _decode_all_view_poses(
+-        self, 
+-        all_view_poses_raw: dict, 
++        self,
++        all_view_poses_raw: dict,
+         view_ss_input_dicts: list,
++        downsample_factor: float,
+     ) -> list:
+         """
+         Decode raw pose predictions for all views.
+@@ -360,7 +361,9 @@ class InferencePipeline:
+                 scene_scale=pointmap_scale,
+                 scene_shift=pointmap_shift,
+             )
+-            
++            if "scale" in decoded:
++                decoded["scale"] = decoded["scale"] * downsample_factor
++
+             # Convert tensors to numpy for easier handling
+             decoded_np = {}
+             for key, value in decoded.items():
+@@ -1154,12 +1157,12 @@ class InferencePipeline:
+                 
+                 # Main pass (with or without weights)
+                 with inject_generator_multi_view(
+-                    ss_generator, 
+-                    num_views=num_views, 
++                    ss_generator,
++                    num_views=num_views,
+                     num_steps=ss_generator.inference_steps,
+                     mode=mode,
+                     attention_logger=attention_logger,
+-                    shape_weights=shape_weights,  # Pass computed weights
++                    shape_weights=shape_weights,
+                 ) as all_view_poses_storage:
+                     return_dict = ss_generator(
+                         latent_shape_dict,
+@@ -1167,9 +1170,13 @@ class InferencePipeline:
+                         *condition_args,
+                         **condition_kwargs,
+                     )
+-                
++                if not all_view_poses_storage:
++                    raise RuntimeError(
++                        "Multi-view inference did not establish per-view pose states."
++                    )
+                 if not self.is_mm_dit():
+                     return_dict = {"shape": return_dict}
++                return_dict["all_view_poses_raw"] = all_view_poses_storage
+ 
+                 shape_latent = return_dict["shape"]
+                 logger.info(f"[Stage 1 Multi-view] Generated shape_latent shape: {shape_latent.shape}")
+@@ -1726,6 +1733,7 @@ class InferencePipeline:
+             all_view_poses_decoded = self._decode_all_view_poses(
+                 ss_return_dict["all_view_poses_raw"],
+                 view_ss_input_dicts,
++                ss_return_dict["downsample_factor"],
+             )
+             ss_return_dict["all_view_poses_decoded"] = all_view_poses_decoded
+             logger.info(f"[Multi-view] Decoded poses for {len(all_view_poses_decoded)} views")
+diff --git a/sam3d_objects/pipeline/layout_post_optimization_utils.py b/sam3d_objects/pipeline/layout_post_optimization_utils.py
+index 6d68086..9f7e3ac 100644
+--- a/sam3d_objects/pipeline/layout_post_optimization_utils.py
++++ b/sam3d_objects/pipeline/layout_post_optimization_utils.py
+@@ -59,8 +59,9 @@ def is_occluded_by_others(mask, point_map, dilation_iter=2, z_thresh=0.05, filte
+     internal_edge = mask & (~eroded)
+     external_edge = dilated & (~mask)
+ 
+-    # Set invalid areas to +inf so they don't affect min-pooling
+-    z_ext = np.where(external_edge, z_map, np.inf)
++    # Synthetic zero/NaN background is missing geometry, not an occluder.
++    valid_depth = np.isfinite(z_map) & (z_map > 0.0)
++    z_ext = np.where(external_edge & valid_depth, z_map, np.inf)
+ 
+     # Apply minimum filter to get local min depth around internal edges
+     z_ext_min = minimum_filter(z_ext, size=filter_size, mode='constant', cval=np.inf)
+diff --git a/sam3d_objects/pipeline/multi_view_utils.py b/sam3d_objects/pipeline/multi_view_utils.py
+index b075263..80c90f5 100644
+--- a/sam3d_objects/pipeline/multi_view_utils.py
++++ b/sam3d_objects/pipeline/multi_view_utils.py
+@@ -48,8 +48,23 @@ def inject_generator_multi_view(
+     - Pose: Only View 0's velocity is used (other views' pose velocity ignored)
+     - Output: shape + View 0's pose
+     """
+-    all_view_states_storage = None
+-    
++    if mode == 'multidiffusion' and generator._solver.__class__.__name__ != 'Euler':
++        raise ValueError(
++            "Per-view pose integration currently requires the Euler solver, got "
++            f"{generator._solver.__class__.__name__}."
++        )
++
++    # Mutable holder returned to the caller.  Pose states are filled during the
++    # ODE solve, after every view has advanced its own pose branch while sharing
++    # one fused shape branch.
++    all_view_states_storage = {}
++    per_view_pose_states = None
++    step_index = 0
++    if hasattr(generator, "_prepare_t_and_d"):
++        pose_t_seq, _ = generator._prepare_t_and_d(num_steps)
++    else:
++        pose_t_seq = generator._prepare_t(num_steps).detach().cpu().numpy()
++
+     original_dynamics = generator._generate_dynamics
+     
+     if mode == 'stochastic':
+@@ -93,14 +108,10 @@ def inject_generator_multi_view(
+         
+         def _new_dynamics_multidiffusion(x_t, t, *args_conditionals, **kwargs_conditionals):
+             """
+-            Multidiffusion mode: fuse predictions from all views.
+-            
+-            Shape: 用平均 velocity 更新
+-            Pose: 
+-                - 默认模式: 只用 View 0 的 velocity
+-                - Per-view 模式: 每个视角用自己的 velocity 更新自己的 pose
++            Multidiffusion mode: fuse shape predictions while integrating one
++            pose state per view.
+             """
+-            nonlocal all_view_states_storage
++            nonlocal per_view_pose_states, step_index
+             
+             # 找到 condition tokens 在 args 中的位置
+             cond_idx = 0
+@@ -131,9 +142,14 @@ def inject_generator_multi_view(
+             else:
+                 logger.warning(f"Condition tokens not organized by views, using same condition for all views")
+                 view_conditions = [cond_tokens] * num_views
+-            
+-            # Fuse predictions from all views
+-            # Shape: averaged, Pose: View 0 only
++
++            pose_keys = [key for key in x_t if key in POSE_KEYS]
++            if per_view_pose_states is None:
++                per_view_pose_states = {
++                    key: torch.stack([x_t[key].clone() for _ in range(num_views)])
++                    for key in pose_keys
++                }
++
+             preds = []
+             for view_idx in range(num_views):
+                 view_cond = view_conditions[view_idx]
+@@ -143,7 +159,12 @@ def inject_generator_multi_view(
+                     new_args = args_conditionals + (view_cond,)
+                 if attention_logger is not None:
+                     attention_logger.set_view(view_idx)
+-                pred = original_dynamics(x_t, t, *new_args, **kwargs_conditionals)
++                view_state = {
++                    key: per_view_pose_states[key][view_idx]
++                    if key in pose_keys else value
++                    for key, value in x_t.items()
++                }
++                pred = original_dynamics(view_state, t, *new_args, **kwargs_conditionals)
+                 preds.append(pred)
+             
+             # Log (only once)
+@@ -159,31 +180,30 @@ def inject_generator_multi_view(
+                 logger.info(f"[Multidiffusion] Default mode: Shape=weighted/avg, Pose=View0")
+                 _new_dynamics_multidiffusion._logged_shape = True
+             
+-            # Fuse predictions
++            # Fuse shape predictions. Pose branches share the same initial
++            # noise but evolve independently under each view's condition.
+             if isinstance(preds[0], dict):
+                 fused_pred = {}
++                dt = float(pose_t_seq[step_index + 1] - pose_t_seq[step_index])
+                 for key in preds[0].keys():
+-                    stacked = torch.stack([p[key] for p in preds])  # [num_views, bs, num_latent, dim]
++                    stacked = torch.stack([p[key] for p in preds])  # [views, batch, ...]
+                     if key in POSE_KEYS:
+-                        # Pose: View 0 only
++                        per_view_pose_states[key] = per_view_pose_states[key] + stacked * dt
+                         fused_pred[key] = preds[0][key]
+                     else:
+-                        # Shape: weighted average or simple average
+                         if shape_weights is not None:
+-                            # Reshape weights for broadcasting
+-                            # stacked: [num_views, bs, num_latent, dim]
+-                            # weights: [num_views] or [num_views, num_latent]
+                             w = shape_weights
+                             if w.dim() == 1:
+-                                # [num_views] -> [num_views, 1, 1, 1]
+                                 w = w.view(-1, 1, 1, 1)
+                             elif w.dim() == 2:
+-                                # [num_views, num_latent] -> [num_views, 1, num_latent, 1]
+                                 w = w.unsqueeze(1).unsqueeze(-1)
+                             w = w.to(stacked.device, stacked.dtype)
+                             fused_pred[key] = (stacked * w).sum(dim=0)
+                         else:
+                             fused_pred[key] = stacked.mean(dim=0)
++                step_index += 1
++                all_view_states_storage.clear()
++                all_view_states_storage.update(per_view_pose_states)
+                 return fused_pred
+             elif isinstance(preds[0], (list, tuple)):
+                 # For non-dict outputs, apply simple average (weights not supported)

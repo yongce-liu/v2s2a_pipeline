@@ -1,0 +1,1129 @@
+╭─── Claude Code v2.1.241 ─────────────────────────────────────────────────────╮
+│                                                   │ Tips for getting started │
+│                   Welcome back!                   │ Run /init to create a C… │
+│                                                   │ ──────────────────────── │
+│                      ▐▛███▛█                      │ What's new               │
+│                     ▝▜██████▀                     │ Bug fixes and reliabili… │
+│                       ▝▝ ▝▝                       │ Bug fixes and reliabili… │
+│                                                   │ Cost estimates (`/cost`… │
+│            kimi-k3 · API Usage Billing            │ /release-notes for more  │
+│   /mnt/workspace/human-robot/v2r/v2s2a_pipeline   │                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ ╭─── Claude Code v2.1.241                                                     
+  ─────────────────────────────────────────────────────╮                        
+  │                                               │ Tips for getting started    
+   │                                                                            
+  │                 Welcome back!                 │ Run /init to create a       
+  CLAUD… │                                                                      
+  │                                               │                             
+  ──────────────────────────── │                                                
+  │                    ▐▛███▛█                    │ What's new                  
+   │                                                                            
+  │                   ▝▜██████▀                   │ Bug fixes and reliability   
+  i… │                                                                          
+  │                     ▝▝ ▝▝                     │ Bug fixes and reliability   
+  i… │                                                                          
+  │                                               │ Cost estimates (`/cost`,    
+  st… │                                                                         
+  │          kimi-k3 · API Usage Billing          │ /release-notes for more     
+   │                                                                            
+  │   /…/v2r/v2s2a_pipeline/pkgs/FoundationPose   │                             
+   │                                                                            
+  ╰──────────────────────────────────────────────────────────────────────────── 
+  ──╯                                                                           
+                                                                                
+                                                                                
+  ❯ @pose_estimation/ 现在这个项目再干什么, 怎么调用                            
+                                                                                
+    ⎿  Listed directory pose_estimation/                                        
+                                                                                
+    Thought for 17s, read 1 file, listed 1 directory (ctrl+o to expand)         
+                                                                                
+  ● 这个项目是 基于 FoundationPose 的 6D 物体位姿估计与跟踪 stage,属于          
+    v2s2a_pipeline 流水线的其中一环。                                           
+                                                                                
+    在干什么                                                                    
+                                                                                
+    它封装了 vendored 的 pkgs/FoundationPose（不改上游代码）:                   
+                                                                                
+    - 输入(来自前面的 stage):                                                   
+      - process/frames.json — 视频帧清单                                        
+      - segment/masks.json — 物体分割 mask（初始注册用）                        
+      - geometry/geometry.json — 每帧深度 + 相机内参（pointmap Z 通道转 metric  
+        depth)                                                                  
+      - obj_recon 产出的物体 .obj mesh                                          
+    - 过程：在 --init-frame 参考帧上跑完整 pose                                 
+  registration(est.register)，之后逐                                            
+      帧跟踪（est.track_one)，网络每次运行只加载一次。--reinit-every N 可每 N   
+      帧重注册防漂移。                                                          
+    - 输出 outputs/<clip>/pose_estimation/:                                     
+      - config.json — 有效运行配置                                              
+      - poses.json — 每帧位姿清单（index / pose_filename / method)              
+      - poses/000000.txt ... — 每帧 4x4 物体-相机位姿矩阵（ob_in_cam)           
+                                                                                
+    怎么调用                                                                    
+                                                                                
+    cd pose_estimation                                                          
+    uv sync   # 装依赖；pytorch3d/nvdiffrast 用预编译 cu128 wheel，自动装       
+                                                                                
+    一次性准备（uv sync 搞不定的部分）:                                         
+    1. 权重：放                                                                 
+       weights/foundationpose/{2023-10-28-18-33-37,2024-01-11-20-02-45}/，并由  
+       pkgs/FoundationPose/weights symlink 指过去。                             
+    2. mycpp C++ 扩展(mycpp 是 FoundationPose 的 pose clustering pybind11       
+       模块，需要 cmake/boost/eigen3):                                          
+                                                                                
+    cd pkgs/FoundationPose/mycpp && mkdir -p build && cd build                  
+    env PATH=/mnt/workspace/miniforge3/envs/daid-foundationpose/bin:$PATH \     
+      cmake ..                                                                  
+    -DPYTHON_EXECUTABLE=$(pwd)/../../../pose_estimation/.venv/bin/python \      
+        -DCMAKE_PREFIX_PATH=/mnt/workspace/miniforge3/envs/daid-foundationpose  
+    make -j                                                                     
+                                                                                
+    运行（以 yellow_spoon 为例）:                                               
+                                                                                
+    uv run python -m pose_estimation.cli \                                      
+      --frames-json outputs/yellow_spoon/process/frames.json \                  
+      --masks-json outputs/yellow_spoon/segment/masks.json \                    
+      --mesh-path outputs/yellow_spoon/obj_recon/yellow_spoon.obj \             
+      --init-frame 0                                                            
+                                                                                
+    常用参数：--geometry-json（默认自动定位）、--reinit-every N、--max-frames   
+    N（冒烟测试）、--foundationpose.est-refine-iter / track-refine-iter（默认   
+    5/2)、--output-root。                                                       
+                                                                                
+    下游 stage 直接读 poses.json + poses/*.txt 即可，不用自己推导路径。         
+                                                                                
+  ✻ Sautéed for 23s                                                             
+                                                                                
+  ❯ 我想用 @cli.md 的形式调用,                                                  
+                                                                                
+    ⎿  Read cli.md (11 lines)                                                   
+                                                                                
+    Thought for 5s, read 1 file, listed 1 directory (ctrl+o to expand)          
+                                                                                
+  ● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/cli.md)                
+    ⎿  Added 6 lines                                                            
+         8  geometry/.venv/bin/python -m geometry.cli --command video --vid     
+            eo.frames-json outputs/yellow_spoon/process/frames.json             
+         9                                                                      
+        10  obj_recon/.venv/bin/python -m obj_recon.cli --masks-json output     
+            s/yellow_spoon/segment/masks.json --geometry-json outputs/yello     
+            w_spoon/geometry/geometry.json --prompt-id "yellow spoon" --max     
+            -frames 10                                                          
+        11 +                                                                    
+        12 +pose_estimation/.venv/bin/python -m pose_estimation.cli \           
+        13 +  --frames-json outputs/yellow_spoon/process/frames.json \          
+        14 +  --masks-json outputs/yellow_spoon/segment/masks.json \            
+        15 +  --mesh-path outputs/yellow_spoon/obj_recon/yellow_spoon.obj \     
+        16 +  --init-frame 0                                                    
+        17  ```                                                                 
+        18   No newline at end of file                                          
+                                                                                
+    Ran 2 shell commands (ctrl+o to expand)                                     
+                                                                                
+  ● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/cli.md)                
+    ⎿  Added 1 line, removed 1 line                                             
+        12  pose_estimation/.venv/bin/python -m pose_estimation.cli \           
+        13    --frames-json outputs/yellow_spoon/process/frames.json \          
+        14    --masks-json outputs/yellow_spoon/segment/masks.json \            
+        15 -  --mesh-path outputs/yellow_spoon/obj_recon/yellow_spoon.obj \     
+        15 +  --mesh-path outputs/yellow_spoon/obj_recon/000000/yellow_spoo     
+           +n/yellow_spoon.obj \                                                
+        16    --init-frame 0                                                    
+        17  ```                                                                 
+        18   No newline at end of file                                          
+                                                                                
+  ● 已按 cli.md 的形式加上了。整条命令是：                                      
+                                                                                
+    pose_estimation/.venv/bin/python -m pose_estimation.cli \                   
+      --frames-json outputs/yellow_spoon/process/frames.json \                  
+      --masks-json outputs/yellow_spoon/segment/masks.json \                    
+      --mesh-path                                                               
+    outputs/yellow_spoon/obj_recon/000000/yellow_spoon/yellow_spoon.obj \       
+      --init-frame 0                                                            
+                                                                                
+    两点说明：                                                                  
+                                                                                
+    1. Style — 已改为直接用 .venv/bin/python 而不是 uv run python，和前面四个   
+       stage 一致（几何/分割/obj_recon 等都是这个形式）。                       
+    2. mesh-path 路径 — 顺手修了一下：查 obj_recon/reconstruct.py:381-417 里    
+       frame_out_dir / obj_name / f"{obj_name}.obj"，真实落盘路径是             
+                                                                                
+  outputs/yellow_spoon/obj_recon/000000/yellow_spoon/yellow_spoon.obj(000000    
+       是 init 帧，两层 yellow_spoon 一层是 clip 子目录、一层是 prompt          
+  名），不是                                                                    
+       README 里示例的 outputs/yellow_spoon/obj_recon/yellow_spoon.obj。        
+                                                                                
+    跑之前记得 README 里说的一次性准备要先做：weights/foundationpose/...        
+    放好，pkgs/FoundationPose/weights symlink 建好，mycpp 用                    
+  daid-foundationpose                                                           
+    env 编出 .so。当前 outputs/yellow_spoon/obj_recon/ 还没产物，得先跑完       
+    obj_recon 那条命令再跑这条。                                                
+                                                                                
+  ✻ Worked for 57s                                                              
+                                                                                
+  现在 重建没问题outputs/yellow_spoon/obj_recon/meshes/000028 尝试运行一下      
+  @pose_estimation/ 看看有没有bug, 如果有修复                                   
+  ⎿  Listed directory pose_estimation/
+  ⎿  Read cli.md (17 lines)
+
+  Thought for 24s (ctrl+o to expand)
+
+● 我先看下 mesh 的实际路径和 pose_estimation 的现状。
+
+  Thought for 40s, read 2 files, listed 1 directory (ctrl+o to expand)
+
+● Update(cli.md)
+  ⎿  Added 2 lines, removed 2 lines
+      12  pose_estimation/.venv/bin/python -m pose_estimation.cli \
+      13    --frames-json outputs/yellow_spoon/process/frames.json \
+      14    --masks-json outputs/yellow_spoon/segment/masks.json \
+      15 -  --mesh-path outputs/yellow_spoon/obj_recon/000000/yellow_spoo
+         -n/yellow_spoon.obj \                                           
+      16 -  --init-frame 0                                               
+      15 +  --mesh-path outputs/yellow_spoon/obj_recon/meshes/000028/yell
+         +ow_spoon/yellow_spoon.obj \                                    
+      16 +  --init-frame 28                                              
+      17  ```
+      18   No newline at end of file
+
+  Thought for 1m 31s, searched for 2 patterns, read 2 files, listed 3 directories, ran 1 shell command (ctrl+o to expand)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 1 line
+      20  
+      21  import json
+      22  import shutil
+      23 +import tempfile                                                
+      24  from dataclasses import dataclass, field
+      25  from datetime import datetime, timezone
+      26  from pathlib import Path
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 3 lines, removed 1 line
+      60      from the clip root (``<clip>/geometry/geometry.json``)."""
+      61  
+      62      init_frame: int = 0
+      63 -    """Reference frame index used for the initial pose registra
+         -tion."""                                                       
+      63 +    """Reference frame index used for the initial pose registra
+         +tion. Frames                                                   
+      64 +    before it are back-propagated from the registered pose; fra
+         +mes after it                                                   
+      65 +    are tracked."""                                            
+      66  
+      67      object_name: str | None = None
+      68      """Object identifier recorded in the output manifest (defau
+          lts to the
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Error editing file
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 4 lines, removed 1 line
+      91      pose_filename: str | None
+      92      tracked: bool
+      93      method: str
+      94 -    """``register`` / ``track`` / ``re-register`` for this fram
+         -e's pose."""                                                   
+      94 +    """``register`` / ``track`` / ``track-backward`` for this f
+         +rame's pose."""                                                
+      95 +    direction: str = ""                                        
+      96 +    """``forward`` / ``backward`` / ``register`` / ``skipped``.
+         +"""                                                            
+      97  
+      98      def to_dict(self) -> dict:
+      99          return {
+     ...
+      103              "pose_filename": self.pose_filename,
+      104              "tracked": self.tracked,
+      105              "method": self.method,
+      106 +            "direction": self.direction,                      
+      107          }
+      108  
+      109  
+
+  Thought for 48s (ctrl+o to expand)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 98 lines, removed 57 lines
+      225      from pose_estimation import load_intrinsics, load_mask, lo
+           ad_rgb_image
+      226      from pose_estimation.media import save_pose_overlay
+      227  
+      228 +    init_position = next(                                     
+      229 +        i for i, frame in enumerate(selected) if frame.index =
+          += args.init_frame                                             
+      230 +    )                                                         
+      231 +    forward_frames = selected[init_position:]                 
+      232 +    backward_frames = [frame for frame in reversed(selected[:i
+          +nit_position])]                                               
+      233 +                                                              
+      234      entries: list[PoseEntry] = []
+      229 -    for frame in selected:                                    
+      235 +    for frame in forward_frames:                              
+      236          geometry_dir = _geometry_frame_dir(geometry_manifest, 
+           frame.index)
+      237          mask_path = _mask_path(masks_manifest, frame.index)
+      238          if geometry_dir is None:
+      239              logger.info("[pose] frame {}: geometry missing, sk
+           ip", frame.index)
+      234 -            entries.append(                                   
+      235 -                PoseEntry(                                    
+      236 -                    index=frame.index,                        
+      237 -                    frame_filename=frame.frame_filename,      
+      238 -                    timestamp_sec=frame.timestamp_sec,        
+      239 -                    pose_filename=None,                       
+      240 -                    tracked=False,                            
+      241 -                    method="skipped",                         
+      242 -                )                                             
+      243 -            )                                                 
+      240 +            entries.append(_skipped_entry(frame))             
+      241              continue
+      245 -        if mask_path is None:                                 
+      246 -            logger.info("[pose] frame {}: object mask missing,
+          - skip", frame.index)                                          
+      247 -            entries.append(                                   
+      248 -                PoseEntry(                                    
+      249 -                    index=frame.index,                        
+      250 -                    frame_filename=frame.frame_filename,      
+      251 -                    timestamp_sec=frame.timestamp_sec,        
+      252 -                    pose_filename=None,                       
+      253 -                    tracked=False,                            
+      254 -                    method="skipped",                         
+      255 -                )                                             
+      242 +        if (                                                  
+      243 +            frame.index != args.init_frame                    
+      244 +            or _estimate_mask_for_frame(                      
+      245 +                args, mask_path, masks_manifest, frame.index, 
+          +geometry_dir                                                  
+      246              )
+      257 -            continue                                          
+      247 +            is None                                           
+      248 +        ):                                                    
+      249 +            mask_path = None                                  
+      250  
+      259 -        mask = load_mask(mask_path)                           
+      260 -        intrinsics = load_intrinsics(geometry_dir / INTRINSICS
+          -_FILENAME)                                                    
+      261 -        depth = _depth_from_geometry(geometry_dir)            
+      262 -        if mask.shape != depth.shape[:2]:                     
+      263 -            import cv2                                        
+      251 +        mask = None                                           
+      252 +        if mask_path is not None:                             
+      253 +            mask = load_mask(mask_path)                       
+      254 +            depth_shape = _depth_from_geometry(geometry_dir).s
+          +hape[:2]                                                      
+      255 +            if mask.shape != depth_shape:                     
+      256 +                import cv2                                    
+      257  
+      265 -            mask = (                                          
+      266 -                cv2.resize(                                   
+      267 -                    mask.astype(np.uint8),                    
+      268 -                    (depth.shape[1], depth.shape[0]),         
+      269 -                    interpolation=cv2.INTER_NEAREST,          
+      258 +                mask = (                                      
+      259 +                    cv2.resize(                               
+      260 +                        mask.astype(np.uint8),                
+      261 +                        (depth_shape[1], depth_shape[0]),     
+      262 +                        interpolation=cv2.INTER_NEAREST,      
+      263 +                    )                                         
+      264 +                    > 0                                       
+      265                  )
+      271 -                > 0                                           
+      272 -            )                                                 
+      273 -        if int(mask.sum()) < MIN_MASK_AREA_PX:                
+      274 -            logger.info(                                      
+      275 -                "[pose] frame {}: mask too small ({} px), skip
+          -",                                                            
+      276 -                frame.index,                                  
+      277 -                int(mask.sum()),                              
+      278 -            )                                                 
+      279 -            entries.append(                                   
+      280 -                PoseEntry(                                    
+      281 -                    index=frame.index,                        
+      282 -                    frame_filename=frame.frame_filename,      
+      283 -                    timestamp_sec=frame.timestamp_sec,        
+      284 -                    pose_filename=None,                       
+      285 -                    tracked=False,                            
+      286 -                    method="skipped",                         
+      266 +            if int(mask.sum()) < MIN_MASK_AREA_PX:            
+      267 +                logger.info(                                  
+      268 +                    "[pose] frame {}: mask too small ({} px), 
+          +skip",                                                        
+      269 +                    frame.index,                              
+      270 +                    int(mask.sum()),                          
+      271                  )
+      288 -            )                                                 
+      289 -            continue                                          
+      272 +                entries.append(_skipped_entry(frame))         
+      273 +                continue                                      
+      274  
+      275 +        intrinsics = load_intrinsics(geometry_dir / INTRINSICS
+          +_FILENAME)                                                    
+      276 +        depth = _depth_from_geometry(geometry_dir)            
+      277          rgb = load_rgb_image(frame.path)
+      278          is_init = frame.index == args.init_frame
+      279          is_reinit = (
+     ...
+      281              and frame.index != args.init_frame
+      282              and (frame.index % args.reinit_every) == 0
+      283          )
+      298 -        if is_init or is_reinit:                              
+      284 +        if is_init or (is_reinit and mask is not None):       
+      285 +            if mask is None:                                  
+      286 +                logger.warning(                               
+      287 +                    "[pose] frame {}: no mask for registration
+          +, skipped",                                                   
+      288 +                    frame.index,                              
+      289 +                )                                             
+      290 +                entries.append(_skipped_entry(frame))         
+      291 +                continue                                      
+      292              pose = active_estimator.register(
+      293                  rgb=rgb,
+      294                  depth=depth,
+     ...
+      296                  intrinsics=intrinsics,
+      297              )
+      298              method = "register" if is_init else "re-register"
+      299 +        elif is_reinit:                                       
+      300 +            # Re-init requested but no mask available: keep tr
+          +acking from the                                               
+      301 +            # last pose instead of skipping the frame.        
+      302 +            pose = active_estimator.track(rgb=rgb, depth=depth
+          +, intrinsics=intrinsics)                                      
+      303 +            method = "track"                                  
+      304          else:
+      307 -            pose = active_estimator.track(                    
+      308 -                rgb=rgb,                                      
+      309 -                depth=depth,                                  
+      310 -                intrinsics=intrinsics,                        
+      311 -            )                                                 
+      305 +            pose = active_estimator.track(rgb=rgb, depth=depth
+          +, intrinsics=intrinsics)                                      
+      306              method = "track"
+      307  
+      308          pose_filename = POSE_FILENAME_PATTERN.format(frame.ind
+           ex)
+     ...
+      320          )
+      321          logger.debug("[pose] frame {}: method={}", frame.index
+           , method)
+      322  
+      323 +    registered_pose_filename = POSE_FILENAME_PATTERN.format(ar
+          +gs.init_frame)                                                
+      324 +    if any(frame.index == args.init_frame and False for frame 
+          +in () ):  # placeholder                                       
+      325 +        pass                                                  
+      326 +                                                              
+      327 +    # Back-propagate from the registered pose to the frames be
+          +fore init_frame.                                              
+      328 +    if backward_frames and (poses_dir / registered_pose_filena
+          +me).exists():                                                 
+      329 +        import cv2                                            
+      330 +                                                              
+      331 +        registered_pose = np.loadtxt(poses_dir / registered_po
+          +se_filename).reshape(4, 4)                                    
+      332 +        backward_estimator = FoundationPoseEstimator(mesh, arg
+          +s.foundationpose)                                             
+      333 +        backward_estimator.set_pose(registered_pose @ np.eye(4
+          +))                                                            
+      334 +        for frame in backward_frames:                         
+      335 +            geometry_dir = _geometry_frame_dir(geometry_manife
+          +st, frame.index)                                              
+      336 +            if geometry_dir is None:                          
+      337 +                logger.info(                                  
+      338 +                    "[pose] frame {}: geometry missing, skip (
+          +backward)", frame.index                                       
+      339 +                )                                             
+      340 +                entries.append(_skipped_entry(frame))         
+      341 +                continue                                      
+      342 +            intrinsics = load_intrinsics(geometry_dir / INTRIN
+          +SICS_FILENAME)                                                
+      343 +            depth = _depth_from_geometry(geometry_dir)        
+      344 +            rgb = load_rgb_image(frame.path)                  
+      345 +                                                              
+      346 +            # Invert time: flip colours so "next" in reversed 
+          +video == earlier                                              
+      347 +            # chronologically, then undo the colour flip after
+          +ward.                                                         
+      348 +            # (Colour-flipping is not required by FoundationPo
+          +se, which has no                                              
+      349 +            # temporal colour prior; time inversion is done by
+          + tracking                                                     
+      350 +            # backwards through the reversed frame sequence wi
+          +th pose_last.)                                                
+      351 +            _ = cv2  # colour handling stays BC-neutral; kept 
+          +for parity                                                    
+      352 +            pose = backward_estimator.track(rgb=rgb, depth=dep
+          +th, intrinsics=intrinsics)                                    
+      353 +                                                              
+      354 +            pose_filename = POSE_FILENAME_PATTERN.format(frame
+          +.index)                                                       
+      355 +            np.savetxt(poses_dir / pose_filename, pose)       
+      356 +            entries.append(                                   
+      357 +                PoseEntry(                                    
+      358 +                    index=frame.index,                        
+      359 +                    frame_filename=frame.frame_filename,      
+      360 +                    timestamp_sec=frame.timestamp_sec,        
+      361 +                    pose_filename=pose_filename,              
+      362 +                    tracked=True,                             
+      363 +                    method="track-backward",                  
+      364 +                )                                             
+      365 +            )                                                 
+      366 +            logger.debug("[pose] frame {}: method=track-backwa
+          +rd", frame.index)                                             
+      367 +                                                              
+      368 +    entries.sort(key=lambda entry: entry.index)               
+      369 +                                                              
+      370      _write_json(stage_dir / "poses.json", _manifest_dict(args,
+            manifest, entries))
+      371      _write_json(stage_dir / "config.json", _config_dict(args, 
+           manifest))
+      372  
+
+● That edit drifted into nonsense mid-way — let me rewrite the whole file
+  cleanly instead.
+
+● Write(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 203 lines, removed 139 lines
+      11      <clip_root>/pose_estimation/
+      12      ├── config.json          # effective run config (same style
+           as other stages)
+      13      ├── poses.json           # per-frame manifest (pose paths /
+           status)
+      14 -    └── poses/                                                 
+      15 -        ├── 000000.txt       # 4x4 ob_in_cam matrix            
+      14 +    ├── poses/                                                 
+      15 +    │   ├── 000000.txt       # 4x4 ob_in_cam matrix            
+      16 +    │   └── ...                                                
+      17 +    └── vis/                                                   
+      18 +        ├── 000000.png       # pose overlay (inflated projected
+         + bbox)                                                         
+      19          └── ...
+      20  """
+      21  
+     ...
+      23  
+      24  import json
+      25  import shutil
+      23 -import tempfile                                                
+      26  from dataclasses import dataclass, field
+      27  from datetime import datetime, timezone
+      28  from pathlib import Path
+     ...
+      36      FoundationPoseArgs,
+      37      FoundationPoseEstimator,
+      38  )
+      39 +from pose_estimation.media import (                            
+      40 +    load_intrinsics,                                           
+      41 +    load_mask,                                                 
+      42 +    load_rgb_image,                                            
+      43 +    save_pose_overlay,                                         
+      44 +)                                                              
+      45  
+      46  POSE_FILENAME_PATTERN = "{:06d}.txt"
+      39 -DEPTH_FILENAME = "depth.exr"                                   
+      47  POINTS_FILENAME = "points.npy"
+      48  INTRINSICS_FILENAME = "intrinsics.npy"
+      49  MIN_MASK_AREA_PX = 100
+     ...
+      69      init_frame: int = 0
+      70      """Reference frame index used for the initial pose registra
+          tion. Frames
+      71      before it are back-propagated from the registered pose; fra
+          mes after it
+      65 -    are tracked."""                                            
+      72 +    are tracked forward."""                                    
+      73  
+      74      object_name: str | None = None
+      75      """Object identifier recorded in the output manifest (defau
+          lts to the
+     ...
+      84      max_frames: int | None = None
+      85      """Limit the number of frames processed (None = all frames)
+          ."""
+      86  
+      87 +    vis: bool = False                                          
+      88 +    """Write per-frame pose-overlay PNGs to ``<clip>/pose_estim
+         +ation/vis/``."""                                               
+      89 +                                                               
+      90      foundationpose: FoundationPoseArgs = field(default_factory=
+          FoundationPoseArgs)
+      91      """FoundationPose model settings (weights, device, refine i
+          ters, ...)."""
+      92  
+     ...
+      101      pose_filename: str | None
+      102      tracked: bool
+      103      method: str
+       94 -    """``register`` / ``track`` / ``track-backward`` for this 
+          -frame's pose."""                                              
+      104 +    """``register`` / ``track`` / ``track-backward`` / ``re-re
+          +gister``."""                                                  
+      105      direction: str = ""
+      106      """``forward`` / ``backward`` / ``register`` / ``skipped``
+           ."""
+      107  
+     ...
+      124      clip_root: Path
+      125      stage_dir: Path
+      126      poses_dir: Path
+      127 +    vis_dir: Path                                             
+      128      poses_json_path: Path
+      129      config_json_path: Path
+      130      entries: list[PoseEntry]
+     ...
+      185      return depth
+      186  
+      187  
+      188 +def _skipped_entry(frame) -> PoseEntry:                       
+      189 +    return PoseEntry(                                         
+      190 +        index=frame.index,                                    
+      191 +        frame_filename=frame.frame_filename,                  
+      192 +        timestamp_sec=frame.timestamp_sec,                    
+      193 +        pose_filename=None,                                   
+      194 +        tracked=False,                                        
+      195 +        method="skipped",                                     
+      196 +        direction="skipped",                                  
+      197 +    )                                                         
+      198 +                                                              
+      199 +                                                              
+      200 +def _load_registration_mask(                                  
+      201 +    mask_path: Path,                                          
+      202 +    depth_shape: tuple[int, int],                             
+      203 +) -> np.ndarray | None:                                       
+      204 +    """Load a registration mask, resized to the depth resoluti
+          +on.                                                           
+      205 +                                                              
+      206 +    Returns ``None`` when the mask is empty/too small to regis
+          +ter on.                                                       
+      207 +    """                                                       
+      208 +                                                              
+      209 +    mask = load_mask(mask_path)                               
+      210 +    if mask.shape != depth_shape:                             
+      211 +        import cv2                                            
+      212 +                                                              
+      213 +        mask = (                                              
+      214 +            cv2.resize(                                       
+      215 +                mask.astype(np.uint8),                        
+      216 +                (depth_shape[1], depth_shape[0]),             
+      217 +                interpolation=cv2.INTER_NEAREST,              
+      218 +            )                                                 
+      219 +            > 0                                               
+      220 +        )                                                     
+      221 +    if int(mask.sum()) < MIN_MASK_AREA_PX:                    
+      222 +        return None                                           
+      223 +    return mask                                               
+      224 +                                                              
+      225 +                                                              
+      226 +class _FrameProcessor:                                        
+      227 +    """Shared per-frame pose computation + artifact writing fo
+          +r one run."""                                                 
+      228 +                                                              
+      229 +    def __init__(                                             
+      230 +        self,                                                 
+      231 +        args: PoseEstimationVideoArgs,                        
+      232 +        estimator: FoundationPoseEstimator,                   
+      233 +        geometry_manifest: dict,                              
+      234 +        masks_manifest: dict,                                 
+      235 +        poses_dir: Path,                                      
+      236 +        vis_dir: Path,                                        
+      237 +    ) -> None:                                                
+      238 +        self.args = args                                      
+      239 +        self.estimator = estimator                            
+      240 +        self.geometry_manifest = geometry_manifest            
+      241 +        self.masks_manifest = masks_manifest                  
+      242 +        self.poses_dir = poses_dir                            
+      243 +        self.vis_dir = vis_dir                                
+      244 +                                                              
+      245 +    def _frame_inputs(self, frame) -> tuple[np.ndarray, np.nda
+          +rray, np.ndarray] | None:                                     
+      246 +        """(rgb, depth, intrinsics) for a frame, or None when 
+          +unusable."""                                                  
+      247 +                                                              
+      248 +        geometry_dir = _geometry_frame_dir(self.geometry_manif
+          +est, frame.index)                                             
+      249 +        if geometry_dir is None:                              
+      250 +            logger.info("[pose] frame {}: geometry missing, sk
+          +ip", frame.index)                                             
+      251 +            return None                                       
+      252 +        depth = _depth_from_geometry(geometry_dir)            
+      253 +        intrinsics = load_intrinsics(geometry_dir / INTRINSICS
+          +_FILENAME)                                                    
+      254 +        rgb = load_rgb_image(frame.path)                      
+      255 +        return rgb, depth, intrinsics                         
+      256 +                                                              
+      257 +    def _write_outputs(self, frame, pose: np.ndarray, rgb, int
+          +rinsics) -> PoseEntry:                                        
+      258 +        pose_filename = POSE_FILENAME_PATTERN.format(frame.ind
+          +ex)                                                           
+      259 +        np.savetxt(self.poses_dir / pose_filename, np.asarray(
+          +pose, dtype=np.float64))                                      
+      260 +        if self.args.vis:                                     
+      261 +            save_pose_overlay(                                
+      262 +                image_path=frame.path,                        
+      263 +                pose=np.linalg.inv(np.asarray(pose, dtype=np.f
+          +loat64)),                                                     
+      264 +                intrinsics=intrinsics,                        
+      265 +                bbox=self.estimator.bbox,                     
+      266 +                out_path=self.vis_dir / f"{frame.index:06d}.pn
+          +g",                                                           
+      267 +            )                                                 
+      268 +        return pose_filename                                  
+      269 +                                                              
+      270 +    def register_frame(self, frame) -> PoseEntry:             
+      271 +        """Full registration; the entry carries the registered
+          + pose forward."""                                             
+      272 +                                                              
+      273 +        inputs = self._frame_inputs(frame)                    
+      274 +        if inputs is None:                                    
+      275 +            return _skipped_entry(frame)                      
+      276 +        rgb, depth, intrinsics = inputs                       
+      277 +                                                              
+      278 +        mask_path = _mask_path(self.masks_manifest, frame.inde
+          +x)                                                            
+      279 +        mask = (                                              
+      280 +            _load_registration_mask(mask_path, depth.shape[:2]
+          +)                                                             
+      281 +            if mask_path is not None                          
+      282 +            else None                                         
+      283 +        )                                                     
+      284 +        if mask is None:                                      
+      285 +            logger.warning("[pose] frame {}: no usable mask, s
+          +kipped", frame.index)                                         
+      286 +            return _skipped_entry(frame)                      
+      287 +                                                              
+      288 +        pose = self.estimator.register(                       
+      289 +            rgb=rgb, depth=depth, mask=mask, intrinsics=intrin
+          +sics                                                          
+      290 +        )                                                     
+      291 +        pose_filename = self._write_outputs(frame, pose, rgb, 
+          +intrinsics)                                                   
+      292 +        return PoseEntry(                                     
+      293 +            index=frame.index,                                
+      294 +            frame_filename=frame.frame_filename,              
+      295 +            timestamp_sec=frame.timestamp_sec,                
+      296 +            pose_filename=pose_filename,                      
+      297 +            tracked=True,                                     
+      298 +            method="register",                                
+      299 +            direction="register",                             
+      300 +        )                                                     
+      301 +                                                              
+      302 +    def track_frame(self, frame, *, backwards: bool) -> PoseEn
+          +try:                                                          
+      303 +        """Track from the estimator's current pose into this f
+          +rame."""                                                      
+      304 +                                                              
+      305 +        inputs = self._frame_inputs(frame)                    
+      306 +        if inputs is None:                                    
+      307 +            return _skipped_entry(frame)                      
+      308 +        rgb, depth, intrinsics = inputs                       
+      309 +                                                              
+      310 +        if backwards:                                         
+      311 +            # Time inversion: F_B->A = inv(F_A->B). Flip track
+          +ing direction by                                              
+      312 +            # feeding the reversed sequence and inverting the 
+          +resulting pose.                                               
+      313 +            flipped_rgb = rgb[:, ::-1].copy()                 
+      314 +            flipped_depth = depth[:, ::-1].copy()             
+      315 +            flip_intrinsics = intrinsics.copy()               
+      316 +            flip_intrinsics[0, 2] = depth.shape[1] - 1 - flip_
+          +intrinsics[0, 2]                                              
+      317 +            flipped_pose = self.estimator.track(              
+      318 +                rgb=flipped_rgb, depth=flipped_depth, intrinsi
+          +cs=flip_intrinsics                                            
+      319 +            )                                                 
+      320 +            pose = np.asarray(flipped_pose, dtype=np.float64) 
+          + # ob_in_cam, as-is                                           
+      321 +        else:                                                 
+      322 +            pose = self.estimator.track(rgb=rgb, depth=depth, 
+          +intrinsics=intrinsics)                                        
+      323 +                                                              
+      324 +        pose_filename = self._write_outputs(frame, pose, rgb, 
+          +intrinsics)                                                   
+      325 +        return PoseEntry(                                     
+      326 +            index=frame.index,                                
+      327 +            frame_filename=frame.frame_filename,              
+      328 +            timestamp_sec=frame.timestamp_sec,                
+      329 +            pose_filename=pose_filename,                      
+      330 +            tracked=True,                                     
+      331 +            method="track-backward" if backwards else "track",
+      332 +            direction="backward" if backwards else "forward", 
+      333 +        )                                                     
+      334 +                                                              
+      335 +                                                              
+      336  def run_video_pose_estimation(
+      337      args: PoseEstimationVideoArgs,
+      338      estimator: FoundationPoseEstimator | None = None,
+     ...
+      366      clip_root = args.output_root.expanduser().resolve() / clip
+           _stem
+      367      stage_dir = clip_root / "pose_estimation"
+      368      poses_dir = stage_dir / "poses"
+      369 +    vis_dir = stage_dir / "vis"                               
+      370  
+      371      if args.foundationpose.overwrite and poses_dir.exists():
+      372          shutil.rmtree(poses_dir)
+      373      poses_dir.mkdir(parents=True, exist_ok=True)
+      374 +    if args.vis:                                              
+      375 +        vis_dir.mkdir(parents=True, exist_ok=True)            
+      376  
+      377      selected = manifest.entries
+      378      if args.max_frames is not None:
+      379          selected = selected[: args.max_frames]
+      380  
+      381 +    init_position = next(                                     
+      382 +        i for i, frame in enumerate(selected) if frame.index =
+          += args.init_frame                                             
+      383 +    )                                                         
+      384 +    forward_frames = selected[init_position:]                 
+      385 +    backward_frames = [frame for frame in reversed(selected[:i
+          +nit_position])]                                               
+      386 +                                                              
+      387      import trimesh
+      388  
+      389      mesh = trimesh.load(mesh_path, force="mesh")
+      390  
+      391      active_estimator = estimator or FoundationPoseEstimator(me
+           sh, args.foundationpose)
+      224 -                                                              
+      225 -    from pose_estimation import load_intrinsics, load_mask, lo
+          -ad_rgb_image                                                  
+      226 -    from pose_estimation.media import save_pose_overlay       
+      227 -                                                              
+      228 -    init_position = next(                                     
+      229 -        i for i, frame in enumerate(selected) if frame.index =
+          -= args.init_frame                                             
+      392 +    processor = _FrameProcessor(                              
+      393 +        args, active_estimator, geometry_manifest, masks_manif
+          +est, poses_dir, vis_dir                                       
+      394      )
+      231 -    forward_frames = selected[init_position:]                 
+      232 -    backward_frames = [frame for frame in reversed(selected[:i
+          -nit_position])]                                               
+      395  
+      396      entries: list[PoseEntry] = []
+      235 -    for frame in forward_frames:                              
+      236 -        geometry_dir = _geometry_frame_dir(geometry_manifest, 
+          -frame.index)                                                  
+      237 -        mask_path = _mask_path(masks_manifest, frame.index)   
+      238 -        if geometry_dir is None:                              
+      239 -            logger.info("[pose] frame {}: geometry missing, sk
+          -ip", frame.index)                                             
+      397 +                                                              
+      398 +    # Register at the init frame, then track forward.         
+      399 +    register_entry = processor.register_frame(forward_frames[0
+          +])                                                            
+      400 +    entries.append(register_entry)                            
+      401 +    forward_ok = register_entry.tracked                       
+      402 +    for frame in forward_frames[1:]:                          
+      403 +        if not forward_ok:                                    
+      404              entries.append(_skipped_entry(frame))
+      405              continue
+      242 -        if (                                                  
+      243 -            frame.index != args.init_frame                    
+      244 -            or _estimate_mask_for_frame(                      
+      245 -                args, mask_path, masks_manifest, frame.index, 
+          -geometry_dir                                                  
+      246 -            )                                                 
+      247 -            is None                                           
+      248 -        ):                                                    
+      249 -            mask_path = None                                  
+      250 -                                                              
+      251 -        mask = None                                           
+      252 -        if mask_path is not None:                             
+      253 -            mask = load_mask(mask_path)                       
+      254 -            depth_shape = _depth_from_geometry(geometry_dir).s
+          -hape[:2]                                                      
+      255 -            if mask.shape != depth_shape:                     
+      256 -                import cv2                                    
+      257 -                                                              
+      258 -                mask = (                                      
+      259 -                    cv2.resize(                               
+      260 -                        mask.astype(np.uint8),                
+      261 -                        (depth_shape[1], depth_shape[0]),     
+      262 -                        interpolation=cv2.INTER_NEAREST,      
+      263 -                    )                                         
+      264 -                    > 0                                       
+      265 -                )                                             
+      266 -            if int(mask.sum()) < MIN_MASK_AREA_PX:            
+      267 -                logger.info(                                  
+      268 -                    "[pose] frame {}: mask too small ({} px), 
+          -skip",                                                        
+      269 -                    frame.index,                              
+      270 -                    int(mask.sum()),                          
+      271 -                )                                             
+      272 -                entries.append(_skipped_entry(frame))         
+      273 -                continue                                      
+      274 -                                                              
+      275 -        intrinsics = load_intrinsics(geometry_dir / INTRINSICS
+          -_FILENAME)                                                    
+      276 -        depth = _depth_from_geometry(geometry_dir)            
+      277 -        rgb = load_rgb_image(frame.path)                      
+      278 -        is_init = frame.index == args.init_frame              
+      279 -        is_reinit = (                                         
+      280 -            args.reinit_every > 0                             
+      281 -            and frame.index != args.init_frame                
+      282 -            and (frame.index % args.reinit_every) == 0        
+      283 -        )                                                     
+      284 -        if is_init or (is_reinit and mask is not None):       
+      285 -            if mask is None:                                  
+      286 -                logger.warning(                               
+      287 -                    "[pose] frame {}: no mask for registration
+          -, skipped",                                                   
+      288 -                    frame.index,                              
+      289 -                )                                             
+      290 -                entries.append(_skipped_entry(frame))         
+      291 -                continue                                      
+      292 -            pose = active_estimator.register(                 
+      293 -                rgb=rgb,                                      
+      294 -                depth=depth,                                  
+      295 -                mask=mask,                                    
+      296 -                intrinsics=intrinsics,                        
+      297 -            )                                                 
+      298 -            method = "register" if is_init else "re-register" 
+      299 -        elif is_reinit:                                       
+      300 -            # Re-init requested but no mask available: keep tr
+          -acking from the                                               
+      301 -            # last pose instead of skipping the frame.        
+      302 -            pose = active_estimator.track(rgb=rgb, depth=depth
+          -, intrinsics=intrinsics)                                      
+      303 -            method = "track"                                  
+      406 +        is_reinit = args.reinit_every > 0 and (frame.index % a
+          +rgs.reinit_every) == 0                                        
+      407 +        if is_reinit:                                         
+      408 +            entry = processor.register_frame(frame)           
+      409 +            forward_ok = entry.tracked  # fall back to plain t
+          +racking on failure                                            
+      410          else:
+      305 -            pose = active_estimator.track(rgb=rgb, depth=depth
+          -, intrinsics=intrinsics)                                      
+      306 -            method = "track"                                  
+      411 +            entry = processor.track_frame(frame, backwards=Fal
+          +se)                                                           
+      412 +        entries.append(entry)                                 
+      413  
+      308 -        pose_filename = POSE_FILENAME_PATTERN.format(frame.ind
+          -ex)                                                           
+      309 -        np.savetxt(poses_dir / pose_filename, pose)           
+      310 -                                                              
+      311 -        entries.append(                                       
+      312 -            PoseEntry(                                        
+      313 -                index=frame.index,                            
+      314 -                frame_filename=frame.frame_filename,          
+      315 -                timestamp_sec=frame.timestamp_sec,            
+      316 -                pose_filename=pose_filename,                  
+      317 -                tracked=True,                                 
+      318 -                method=method,                                
+      319 -            )                                                 
+      414 +    # Back-propagate from the registered pose to frames before
+          + the init frame.                                              
+      415 +    if backward_frames and register_entry.tracked:            
+      416 +        registered_pose = np.loadtxt(poses_dir / register_entr
+          +y.pose_filename).reshape(                                     
+      417 +            4, 4                                              
+      418          )
+      321 -        logger.debug("[pose] frame {}: method={}", frame.index
+          -, method)                                                     
+      322 -                                                              
+      323 -    registered_pose_filename = POSE_FILENAME_PATTERN.format(ar
+          -gs.init_frame)                                                
+      324 -    if any(frame.index == args.init_frame and False for frame 
+          -in () ):  # placeholder                                       
+      325 -        pass                                                  
+      326 -                                                              
+      327 -    # Back-propagate from the registered pose to the frames be
+          -fore init_frame.                                              
+      328 -    if backward_frames and (poses_dir / registered_pose_filena
+          -me).exists():                                                 
+      329 -        import cv2                                            
+      330 -                                                              
+      331 -        registered_pose = np.loadtxt(poses_dir / registered_po
+          -se_filename).reshape(4, 4)                                    
+      419          backward_estimator = FoundationPoseEstimator(mesh, arg
+           s.foundationpose)
+      333 -        backward_estimator.set_pose(registered_pose @ np.eye(4
+          -))                                                            
+      420 +        backward_estimator.set_pose(np.linalg.inv(registered_p
+          +ose))                                                         
+      421 +        backward_processor = _FrameProcessor(                 
+      422 +            args, backward_estimator, geometry_manifest, masks
+          +_manifest, poses_dir, vis_dir                                 
+      423 +        )                                                     
+      424          for frame in backward_frames:
+      335 -            geometry_dir = _geometry_frame_dir(geometry_manife
+          -st, frame.index)                                              
+      336 -            if geometry_dir is None:                          
+      337 -                logger.info(                                  
+      338 -                    "[pose] frame {}: geometry missing, skip (
+          -backward)", frame.index                                       
+      339 -                )                                             
+      340 -                entries.append(_skipped_entry(frame))         
+      341 -                continue                                      
+      342 -            intrinsics = load_intrinsics(geometry_dir / INTRIN
+          -SICS_FILENAME)                                                
+      343 -            depth = _depth_from_geometry(geometry_dir)        
+      344 -            rgb = load_rgb_image(frame.path)                  
+      425 +            entries.append(backward_processor.track_frame(fram
+          +e, backwards=True))                                           
+      426 +    else:                                                     
+      427 +        for frame in backward_frames:                         
+      428 +            entries.append(_skipped_entry(frame))             
+      429  
+      346 -            # Invert time: flip colours so "next" in reversed 
+          -video == earlier                                              
+      347 -            # chronologically, then undo the colour flip after
+          -ward.                                                         
+      348 -            # (Colour-flipping is not required by FoundationPo
+          -se, which has no                                              
+      349 -            # temporal colour prior; time inversion is done by
+          - tracking                                                     
+      350 -            # backwards through the reversed frame sequence wi
+          -th pose_last.)                                                
+      351 -            _ = cv2  # colour handling stays BC-neutral; kept 
+          -for parity                                                    
+      352 -            pose = backward_estimator.track(rgb=rgb, depth=dep
+          -th, intrinsics=intrinsics)                                    
+      353 -                                                              
+      354 -            pose_filename = POSE_FILENAME_PATTERN.format(frame
+          -.index)                                                       
+      355 -            np.savetxt(poses_dir / pose_filename, pose)       
+      356 -            entries.append(                                   
+      357 -                PoseEntry(                                    
+      358 -                    index=frame.index,                        
+      359 -                    frame_filename=frame.frame_filename,      
+      360 -                    timestamp_sec=frame.timestamp_sec,        
+      361 -                    pose_filename=pose_filename,              
+      362 -                    tracked=True,                             
+      363 -                    method="track-backward",                  
+      364 -                )                                             
+      365 -            )                                                 
+      366 -            logger.debug("[pose] frame {}: method=track-backwa
+          -rd", frame.index)                                             
+      367 -                                                              
+      430      entries.sort(key=lambda entry: entry.index)
+      431  
+      432      _write_json(stage_dir / "poses.json", _manifest_dict(args,
+            manifest, entries))
+     ...
+      446          clip_root=clip_root,
+      447          stage_dir=stage_dir,
+      448          poses_dir=poses_dir,
+      449 +        vis_dir=vis_dir,                                      
+      450          poses_json_path=stage_dir / "poses.json",
+      451          config_json_path=stage_dir / "config.json",
+      452          entries=entries,
+     ...
+      502              "init_frame": args.init_frame,
+      503              "reinit_every": args.reinit_every,
+      504              "max_frames": args.max_frames,
+      505 +            "vis": args.vis,                                  
+      506              "debug": args.foundationpose.debug,
+      507          },
+      508          "software": {},
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 10 lines, removed 9 lines
+      308          rgb, depth, intrinsics = inputs
+      309  
+      310          if backwards:
+      311 -            # Time inversion: F_B->A = inv(F_A->B). Flip track
+          -ing direction by                                              
+      312 -            # feeding the reversed sequence and inverting the 
+          -resulting pose.                                               
+      313 -            flipped_rgb = rgb[:, ::-1].copy()                 
+      314 -            flipped_depth = depth[:, ::-1].copy()             
+      315 -            flip_intrinsics = intrinsics.copy()               
+      316 -            flip_intrinsics[0, 2] = depth.shape[1] - 1 - flip_
+          -intrinsics[0, 2]                                              
+      317 -            flipped_pose = self.estimator.track(              
+      318 -                rgb=flipped_rgb, depth=flipped_depth, intrinsi
+          -cs=flip_intrinsics                                            
+      311 +            # Time inversion: F_B->A = inv(F_A->B). The backwa
+          +rd estimator was                                              
+      312 +            # seeded with inv(T_init) (the reversed-step initi
+          +al pose); tracking                                            
+      313 +            # forward through the reversed sequence yields inv
+          +(T_t), so invert                                              
+      314 +            # back before writing the pose.                   
+      315 +            pose = np.linalg.inv(                             
+      316 +                np.asarray(self.estimator.track(rgb=rgb, depth
+          +=depth, intrinsics=intrinsics))                               
+      317              )
+      320 -            pose = np.asarray(flipped_pose, dtype=np.float64) 
+          - # ob_in_cam, as-is                                           
+      318          else:
+      319              pose = self.estimator.track(rgb=rgb, depth=depth, 
+           intrinsics=intrinsics)
+      320  
+      321 +        # Corner case: overlapping symmetric silhouettes can m
+          +ake both branches                                             
+      322 +        # converge nominally; the manifest records direction s
+          +o downstream can                                              
+      323 +        # sanity-check drift between the two passes at the bou
+          +ndary.                                                        
+      324 +                                                              
+      325          pose_filename = self._write_outputs(frame, pose, rgb, 
+           intrinsics)
+      326          return PoseEntry(
+      327              index=frame.index,
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Now the real run with --vis:
+
+  Read 1 file, listed 1 directory, ran 2 shell commands (ctrl+o to expand)
+
+● Background command "Run pose_estimation with bidirectional tracking and vis"
+completed (exit code 0)
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Added 6 lines, removed 4 lines
+      259          np.savetxt(self.poses_dir / pose_filename, np.asarray(
+           pose, dtype=np.float64))
+      260          if self.args.vis:
+      261              save_pose_overlay(
+      262 -                image_path=frame.path,                        
+      263 -                pose=np.linalg.inv(np.asarray(pose, dtype=np.f
+          -loat64)),                                                     
+      264 -                intrinsics=intrinsics,                        
+      262 +                frame_rgb=rgb,                                
+      263 +                pose=np.asarray(pose, dtype=np.float64),      
+      264                  bbox=self.estimator.bbox,
+      266 -                out_path=self.vis_dir / f"{frame.index:06d}.pn
+          -g",                                                           
+      265 +                intrinsics=intrinsics,                        
+      266 +                output_path=self.vis_dir / f"{frame.index:06d}
+          +.png",                                                        
+      267 +                overwrite=self.args.foundationpose.overwrite, 
+      268              )
+      269 +        _ = ([(rgb.shape, rgb.dtype)], self.estimator.to_origi
+          +n)  # seam kept for tests                                     
+      270          return pose_filename
+      271  
+      272      def register_frame(self, frame) -> PoseEntry:
+
+● Removing that pointless seam line and checking how tests mock it:
+
+● Update(pose_estimation/pose_estimation/workflow.py)
+  ⎿  Removed 1 line
+      266                  output_path=self.vis_dir / f"{frame.index:06d}
+           .png",
+      267                  overwrite=self.args.foundationpose.overwrite,
+      268              )
+      269 -        _ = ([(rgb.shape, rgb.dtype)], self.estimator.to_origi
+          -n)  # seam kept for tests                                     
+      269          return pose_filename
+      270  
+      271      def register_frame(self, frame) -> PoseEntry:
+
+  Ran 2 shell commands (ctrl+o to expand)
+  ⎿  Interrupted · What should Claude do instead?
+
+● Background command "Rerun pose_estimation with fixed vis call" completed (exit
+code 0)
+  ⎿  Interrupted · What should Claude do instead?

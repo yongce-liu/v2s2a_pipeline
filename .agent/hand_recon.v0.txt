@@ -1,0 +1,1579 @@
+╭─── Claude Code v2.1.241 ─────────────────────────────────────────────────────╮
+│                                                  │ Tips for getting started  │
+│                   Welcome back!                  │ Run /init to create a CL… │
+│                                                  │ ───────────────────────── │
+│                      ▐▛███▛█                     │ What's new                │
+│                     ▝▜██████▀                    │ Bug fixes and reliabilit… │
+│                       ▝▝ ▝▝                      │ Bug fixes and reliabilit… │
+│                                                  │ Cost estimates (`/cost`,… │
+│           kimi-k3 · API Usage Billing            │ /release-notes for more   │
+│   /…/human-robot/v2r/v2s2a_pipeline/hand_recon   │                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ 参考 @process/ 和 @segment/ 的设计风格 写一个 手部重建的子包, 主要调用        
+  @pkgs/HaWoR/ , 可以在uv虚拟环境里安装, 你可以为 @pkgs/HaWoR/ 写一个pyproject  
+  toml, 之后 @hand_recon 中调用安装, 其余的 @pkgs/HaWoR/ 文件尽可能地不要修改,  
+  如果需要修改的时候 可以进行继承 在本项目中实现, 此外                          
+  你可以参考/home/yongce/workspace/human-robot/v2r/do-as-i-do 中是怎么调用      
+  Hawor的脚本                                                                   
+  ⎿  Listed directory process/
+  ⎿  Listed directory segment/
+  ⎿  Listed directory pkgs/HaWoR/
+  ⎿  Listed directory hand_recon/
+
+  Thought for 5s (ctrl+o to expand)
+
+● 我来先了解参考包的设计风格和 HaWoR 的调用方式。
+
+  Thought for 5s, searched for 1 pattern, read 8 files, listed 1 directory (ctrl+o to expand)
+
+● 继续了解 HaWoR 的结构和 do-as-i-do 中的调用方式。
+
+  Thought for 1m 45s, searched for 4 patterns, read 10 files, listed 6 directories, ran 6 shell commands (ctrl+o to expand)
+
+● 现在我对两边都比较清楚了。再看几个关键文件的依赖后就可以开始动手了。
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 依赖情况已经清楚了。现在创建任务并开始搭建 hand_recon 子包。
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 全部信息齐了。现在开始搭建 hand_recon 子包。
+
+● Write(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml)
+  ⎿  Wrote 91 lines to ../pkgs/HaWoR/pyproject.toml
+       1 [build-system]
+       2 requires = ["hatchling"]
+       3 build-backend = "hatchling.build"
+       4 
+       5 [project]
+       7 version = "0.1.0"
+       8 description = "HaWoR hand reconstruction, packaged with all inte
+         rnal top-level modules under one namespace"
+       9 readme = "README.md"
+      10 requires-python = ">=3.10,<3.11"
+     … +90 lines (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Removed 7 lines
+      70  [tool.hatch.build.targets.wheel]
+      71  packages = ["haworpkg"]
+      72  
+      73 -[tool.hatch.build.targets.wheel.force-include]                 
+      74 -"hawor_assets/pth/hawor.pth" = "hawor.pth"                     
+      75 -"hawor_assets/scripts/hawor_bootstrap.py" = "hawor_bootstrap.py
+         -"                                                              
+      76 -                                                               
+      77 -[dependency-groups]                                            
+      78 -dev = []                                                       
+      79 -                                                               
+      73  [tool.uv]
+      74  required-version = ">=0.11.3"
+      75  index-strategy = "unsafe-best-match"
+
+● 现在创建 hand_recon 子包。先创建 CLI、symlink 追踪和 sitecustomize:
+
+● Write(hand_recon/paths.py)
+  ⎿  Wrote 21 lines to hand_recon/paths.py
+       1 """Shared path constants for the hand_recon package."""
+       2 
+       3 from __future__ import annotations
+       4 
+       5 from pathlib import Path
+       6 
+       7 PACKAGE_DIR = Path(__file__).resolve().parent
+       8 HAND_RECON_ROOT = PACKAGE_DIR.parent
+       9 PROJECT_ROOT = HAND_RECON_ROOT.parent
+      10 HAWOR_SOURCE = PROJECT_ROOT / "pkgs" / "HaWoR"
+     … +11 lines (ctrl+o to expand)
+
+● Write(hand_recon/__init__.py)
+  ⎿  Wrote 15 lines to hand_recon/__init__.py
+      1 """HaWoR-based hand mesh reconstruction for the v2s2a_pipeline.""
+        "
+      2 
+      3 __version__ = "0.1.0"
+      4 
+      5 from hand_recon.paths import (
+      6     HAWOR_SOURCE,
+      7     HAND_RECON_ROOT,
+      8     PROJECT_ROOT,
+      9 )
+     … +5 lines (ctrl+o to expand)
+
+● Write(hand_recon/symlink_tracker.py)
+  ⎿  Wrote 86 lines to hand_recon/symlink_tracker.py
+       1 """Context manager that snapshots and removes stale HaWoR symlin
+       2 
+       3 HaWoR internal code writes outputs using paths like ``<cwd_root>
+       4 where ``<cwd_root>`` depends on the directory shape. To redirect
+       5 pre-place symlinks that bake in the destination.
+       6 
+         es it would
+       8 otherwise not disturb) and, on cleanup, walks every directory th
+       9 contained one of ours, deleting links whose targets now 404. Tha
+      10 broken symlinks from poisoning later glob searches.
+     … +86 lines (ctrl+o to expand)
+
+  Searched for 1 pattern, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● 看清楚了，现在开始写正式的 hand_recon 工作流代码。
+
+● Write(hand_recon/hawor_stage.py)
+  ⎿  Wrote 215 lines to hand_recon/hawor_stage.py
+       1 """Thin wrappers that adapt HaWoR's top-level modules to a per-c
+       2 
+         s`` /
+         ectories sit
+         /weights``,
+       6 ``./_DATA/``, ``thirdparty/...``) are met. The ``hawor`` package
+       7 ``pkgs/HaWoR/pyproject.toml`` handles the former via a .pth hook
+       8 sets up the latter by bind-mounting the v2s2a_pipeline workspace
+       9 expected paths with symlinks, then cleaning them up when the run
+      10 """
+     … +251 lines (ctrl+o to expand)
+
+● 我需要先看一下 daid 的 headless 修改部分，看看能否直接继承而不用修改仓库文件。
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 看到了 — pkgs 的 run_vis2_on_video 是原始版本（硬编码
+  interactive=True)。按用户要求"继承而不修改"，我继承 run_vis2_on_video
+  并覆写关键部分。先看包内完整 run_vis2_on_video 以确定要覆写哪段：
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● 现在写 hand_recon 的核心 workflow。它将通过继承/monkey-patch 的方式使用
+  HaWoR，绝不修改 pkgs 文件：
+
+● Write(hand_recon/workflow.py)
+  ⎿  Wrote 443 lines to hand_recon/workflow.py
+       1 """End-to-end HaWoR hand reconstruction for one clip.
+       2 
+       3 Reads the ``process`` stage's frame manifest, runs HaWoR's detec
+       4 motion estimation, optional SLAM, infiller, and MANO forward pas
+         s, and writes
+       5 the agreed pipeline artifacts under ``<clip_root>/hand_recon/``:
+       6 
+       8 
+       9     <clip_root>/hand_recon/
+      10     ├── config.json
+     … +473 lines (ctrl+o to expand)
+
+● Write(hand_recon/cli.py)  ⎿  Wrote 31 lines to hand_recon/cli.py
+      1 """Command-line entry point for the hand_recon package.
+      2 
+      3 Usage:
+      4 
+      5 .. code-block:: bash
+      6 
+      7     uv run python -m hand_recon.cli \
+      8         --frames-json outputs/0/process/frames.json
+      9 """
+     … +22 lines (ctrl+o to expand)
+
+● Write(pyproject.toml)
+  ⎿  Wrote 48 lines to pyproject.toml
+       1 [build-system]
+       2 requires = ["hatchling"]
+       3 build-backend = "hatchling.build"
+       4 
+       5 [project]
+       7 version = "0.1.0"
+       8 description = "HaWoR-based hand mesh reconstruction for v2s2a_pi
+         peline"
+       9 readme = "README.md"
+      10 requires-python = ">=3.10,<3.11"
+     … +39 lines (ctrl+o to expand)
+
+● Write(README.md)
+  ⎿  Wrote 66 lines to README.md
+       1 # hand_recon
+       2 
+         raps the
+       4 upstream `pkgs/HaWoR` scripts behind the same stage conventions 
+         as `process`
+         es its
+       6 outputs under `outputs/<clip>/hand_recon/`.
+       7 
+       9 
+      10 ```bash
+     … +75 lines (ctrl+o to expand)
+
+● Write(tests/test_symlink_tracker.py)
+  ⎿  Wrote 64 lines to tests/test_symlink_tracker.py
+       1 """Tests for the symlink cleanup helpers."""
+       2 
+       3 from __future__ import annotations
+       4 
+       5 from pathlib import Path
+       7 from hand_recon.symlink_tracker import SymlinkTracker, symlink_t
+         racker
+       8 
+       9 
+      10 def test_link_creates_symlink(tmp_path: Path) -> None:
+     … +57 lines (ctrl+o to expand)
+
+● Write(tests/test_workflow_args.py)
+  ⎿  Wrote 47 lines to tests/test_workflow_args.py
+       1 """Smoke tests for the workflow argument dataclass.
+       2 
+       3 These don't run the heavy HaWoR pipeline — they exercise the man
+       4 helpers that pure-python and the argument shapes handed to HaWoR
+         .
+       5 """
+       6 
+       8 
+       9 import json
+      10 from pathlib import Path
+     … +38 lines (ctrl+o to expand)
+
+● 现在需要实现 pkgs/HaWoR 的 haworpkg 包结构。其原理是：把 HaWoR 的六棵树（lib/,
+  hawor/, infiller/, scripts/, thirdparty/, demo.py）聚合到一个 haworpkg/
+  目录，再通过 .pth 文件让它整个进入 sys.path。关键是这个聚合需要在构建 wheel
+  时做，而上游代码目录不该被修改。
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 1 line, removed 1 line
+      1  [build-system]
+      2  requires = ["hatchling"]
+      3 -build-backend = "hatchling.build"                               
+      3 +build-backend = "hawor_build"                                   
+      4  
+      5  [project]
+      6  name = "hawor"
+
+● Write(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/hawor_build.py)
+  ⎿  Wrote 69 lines to ../pkgs/HaWoR/hawor_build.py
+       1 """Hatchling build hook that assembles the ``haworpkg`` tree.
+       3 HaWoR's repository ships a flat layout of top-level packages (``
+         lib``,
+         ttering of
+         with wheels
+       6 that package other libraries under the same root (``lib``, ``dem
+       7 ``app``), so a plain wheel that puts each of those on ``sys.path
+         `` directly
+       9 
+         e six trees
+     … +73 lines (ctrl+o to expand)
+
+● Write(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/hawor_assets/pt
+       h/hawor.pth)
+  ⎿  Wrote 1 line to ../pkgs/HaWoR/hawor_assets/pth/hawor.pth
+      1 import os, sys; _pkg = os.path.join(os.path.dirname(__file__), 'h
+        aworpkg'); sys.path.insert(0, _pkg) if os.path.isdir(_pkg) else N
+        one
+
+● Write(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/hawor_assets/sc
+       ripts/hawor_bootstrap.py)
+  ⎿  Wrote 18 lines to
+     ../pkgs/HaWoR/hawor_assets/scripts/hawor_bootstrap.py
+       1 """sitecustomize-time hook: make the assembled HaWoR namespace i
+       2 
+       3 Loaded by ``hawor.pth`` when this wheel is installed. It inserts
+       4 ``haworpkg/`` directory at the front of ``sys.path`` once the wh
+         eel copy
+         nfiller``,
+       6 ``scripts``, ``thirdparty``) resolves correctly inside the wheel
+       7 ``import haworpkg`` should also work.
+       8 """
+      10 from __future__ import annotations
+     … +13 lines (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 7 lines
+      69  
+      70  [tool.hatch.build.targets.wheel]
+      71  packages = ["haworpkg"]
+      72 +hooks = { "custom" = {} }                                      
+      73  
+      74 +[tool.hatch.build.targets.wheel.force-include]                 
+      75 +"hawor_assets/pth/hawor.pth" = "hawor.pth"                     
+      76 +                                                               
+      77 +[build-system]                                                 
+      78 +backend-path = ["."]                                           
+      79 +                                                               
+      80  [tool.uv]
+      81  required-version = ">=0.11.3"
+      82  index-strategy = "unsafe-best-match"
+
+● 我需要重新审查打包方案。让用户清楚看到当前方案的问题，我修正 pyproject
+  并用更稳妥的方式：
+
+  Read 1 file (ctrl+o to expand)
+
+● 让我重新梳理打包方案，用一个简单可靠的方法替代之前的 hook 方案：
+
+● Write(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml)
+  ⎿  Added 10 lines, removed 14 lines
+      1  [build-system]
+      2  requires = ["hatchling"]
+      3 -build-backend = "hawor_build"                                   
+      3 +build-backend = "hatchling.build"                               
+      4  
+      5  [project]
+      6  name = "hawor"
+     ...
+      58  ]
+      59  
+      60  # NOTE: source layout. HaWoR's internal code resolves imports t
+          hrough
+      61 -# top-level packages named ``lib``, ``hawor``, ``infiller``, ``
+         -scripts``,                                                     
+      62 -# ``thirdparty``, ``demo``, ``app`` and so on. Several of those
+         - names                                                         
+      63 -# (``lib``, ``demo``, ``app``, ``scripts``) collide with wheel 
+         -contents of                                                    
+      64 -# other third-party distributions, so the wheel instead ships e
+         -verything                                                      
+      65 -# under the single ``haworpkg`` namespace; a .pth path-hook add
+         -s ``haworpkg``                                                 
+      66 -# to ``sys.path`` at interpreter startup so the original import
+         -s keep                                                         
+      67 -# working, with collision-prone namespaces (_hawor_lib, _hawor_
+         -demo, ...)                                                     
+      68 -# imported first to win over any third-party namesakes.        
+      61 +# top-level packages named ``lib``, ``hawor``, ``infiller``, ``
+         +scripts``.                                                     
+      62 +# Several of those names (``lib`` in particular) collide with w
+         +heel contents                                                  
+      63 +# of other third-party distributions, so this wheel instead shi
+         +ps everything                                                  
+      64 +# under one unique namespace (``haworpkg``) via symlinks mainta
+         +ined by                                                        
+      65 +# scripts/refresh_haworpkg.py, and lets ``hawor.pth`` put that 
+         +container                                                      
+      66 +# directory on ``sys.path`` so HaWoR's original imports keep wo
+         +rking.                                                         
+      67  
+      68  [tool.hatch.build.targets.wheel]
+      71 -packages = ["haworpkg"]                                        
+      72 -hooks = { "custom" = {} }                                      
+      69 +packages = [                                                   
+      70 +  "haworpkg",                                                  
+      71 +]                                                              
+      72  
+      73  [tool.hatch.build.targets.wheel.force-include]
+      74  "hawor_assets/pth/hawor.pth" = "hawor.pth"
+      75  
+      77 -[build-system]                                                 
+      78 -backend-path = ["."]                                           
+      79 -                                                               
+      76  [tool.uv]
+      77  required-version = ">=0.11.3"
+      78  index-strategy = "unsafe-best-match"
+
+● Write(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/scripts/refresh
+       _haworpkg.py)
+  ⎿  Wrote 62 lines to ../pkgs/HaWoR/scripts/refresh_haworpkg.py
+       1 """Regenerate the ``haworpkg/`` symlink tree.
+       2 
+       3 Run after cloning or after adding/removing any top-level HaWoR p
+         ackage.
+       4 
+       6 
+       7     python scripts/refresh_haworpkg.py
+       8 """
+       9 
+      10 from __future__ import annotations
+     … +56 lines (ctrl+o to expand)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/.gitignore)
+  ⎿  Added 1 line
+      2  
+      3  /example/video_0
+      4  /weights
+      5 +/haworpkg                                                       
+      6  /app_pytorch3d*
+      7  /hot3d/dataset
+      8  /hot3d/*_export
+
+● 等等，用户要求"尽可能不修改 HaWoR 文件"。修改 .gitignore
+  也算修改。让我用一个不修改的办法 —— 用 git exclude（项目层）删除 HaWoR 的
+  gitignore 改动：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/.gitignore)
+  ⎿  Removed 1 line
+      2  
+      3  /example/video_0
+      4  /weights
+      5 -/haworpkg                                                       
+      5  /app_pytorch3d*
+      6  /hot3d/dataset
+      7  /hot3d/*_export
+
+  Listed 1 directory, ran 3 shell commands (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 3 lines
+      81  torch = { index = "pytorch-cu128" }
+      82  torchvision = { index = "pytorch-cu128" }
+      83  
+      84 +[tool.uv.extra-build-dependencies]                             
+      85 +chumpy = ["pip"]                                               
+      86 +                                                               
+      87  [[tool.uv.index]]
+      88  name = "pytorch-cu128"
+      89  url = "https://download.pytorch.org/whl/cu128"
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● 让我修正位置，把 extra-build-dependencies 放到 hand_recon 自己的 pyproject
+  中，因为 uv 读取的是根的 tool.uv:
+
+● Update(pyproject.toml)
+  ⎿  Added 3 lines
+      37  [tool.uv.sources]
+      38  hawor = { path = "../pkgs/HaWoR", editable = true }
+      39  
+      40 +[tool.uv.extra-build-dependencies]                             
+      41 +chumpy = ["pip", "setuptools<82"]                              
+      42 +                                                               
+      43  [tool.pytest.ini_options]
+      44  testpaths = ["tests"]
+      45  python_files = ["test_*.py"]
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 1 line, removed 1 line
+      52    "scipy",
+      53    "tqdm",
+      54    "roma",
+      55 -  "lietorch==0.2",                                             
+      55 +  "lietorch==0.2; sys_platform == 'linux'",                    
+      56    "droid-backends",
+      57    "bpy",
+      58  ]
+
+● Update(pyproject.toml)
+  ⎿  Added 5 lines
+      40  [tool.uv.extra-build-dependencies]
+      41  chumpy = ["pip", "setuptools<82"]
+      42  
+      43 +# HaWoR's dependency set is CUDA-heavy and linux-only; skip res
+         +olving for                                                     
+      44 +# other platforms (e.g. uv's "all platforms" default lockfile t
+         +arget).                                                        
+      45 +[tool.uv]                                                      
+      46 +environments = ["sys_platform == 'linux'"]                     
+      47 +                                                               
+      48  [tool.pytest.ini_options]
+      49  testpaths = ["tests"]
+      50  python_files = ["test_*.py"]
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(pyproject.toml)
+  ⎿  Added 1 line, removed 5 lines
+      33  [tool.uv]
+      34  required-version = ">=0.11.3"
+      35  index-strategy = "unsafe-best-match"
+      36 +environments = ["sys_platform == 'linux'"]                     
+      37  
+      38  [tool.uv.sources]
+      39  hawor = { path = "../pkgs/HaWoR", editable = true }
+     ...
+      41  [tool.uv.extra-build-dependencies]
+      42  chumpy = ["pip", "setuptools<82"]
+      43  
+      43 -# HaWoR's dependency set is CUDA-heavy and linux-only; skip res
+         -olving for                                                     
+      44 -# other platforms (e.g. uv's "all platforms" default lockfile t
+         -arget).                                                        
+      45 -[tool.uv]                                                      
+      46 -environments = ["sys_platform == 'linux'"]                     
+      47 -                                                               
+      44  [tool.pytest.ini_options]
+      45  testpaths = ["tests"]
+      46  python_files = ["test_*.py"]
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 1 line, removed 1 line
+      52    "scipy",
+      53    "tqdm",
+      54    "roma",
+      55 -  "lietorch==0.2; sys_platform == 'linux'",                    
+      55 +  "lietorch==0.2; platform_machine == 'x86_64' and sys_platform
+         + == 'linux'",                                                  
+      56    "droid-backends",
+      57    "bpy",
+      58  ]
+
+● Update(pyproject.toml)
+  ⎿  Added 1 line, removed 1 line
+      33  [tool.uv]
+      34  required-version = ">=0.11.3"
+      35  index-strategy = "unsafe-best-match"
+      36 -environments = ["sys_platform == 'linux'"]                     
+      36 +environments = ["sys_platform == 'linux' and platform_machine =
+         += 'x86_64'"]                                                   
+      37  
+      38  [tool.uv.sources]
+      39  hawor = { path = "../pkgs/HaWoR", editable = true }
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 1 line, removed 1 line
+      53    "tqdm",
+      54    "roma",
+      55    "lietorch==0.2; platform_machine == 'x86_64' and sys_platform
+           == 'linux'",
+      56 -  "droid-backends",                                            
+      56 +  "droid-slam @ file:///mnt/workspace/human-robot/v2r/v2s2a_pip
+         +eline/pkgs/HaWoR/thirdparty/DROID-SLAM; platform_machine == 'x8
+         +6_64' and sys_platform == 'linux'",                            
+      57    "bpy",
+      58  ]
+      59  
+
+  Listed 1 directory, ran 2 shell commands (ctrl+o to expand)
+
+● 我的 CWD 是 hand_recon，所以 ls 找不到。让我换一组更稳的方案 — DROID-SLAM
+  是嵌套子模块，先把 HaWoR 侧的 Hawor 不要求安装 droid_backends，因为
+  static_camera=True 时我们不会调用 SLAM:
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 5 lines, removed 2 lines
+      52    "scipy",
+      53    "tqdm",
+      54    "roma",
+      55 -  "lietorch==0.2; platform_machine == 'x86_64' and sys_platform
+         - == 'linux'",                                                  
+      56 -  "droid-slam @ file:///mnt/workspace/human-robot/v2r/v2s2a_pip
+         -eline/pkgs/HaWoR/thirdparty/DROID-SLAM; platform_machine == 'x8
+         -6_64' and sys_platform == 'linux'",                            
+      55 +  # DROID-SLAM/lietorch/droid-backends only needed when --no-st
+         +atic-camera.                                                   
+      56 +  # They have custom cuda build steps; omit from the uv-managed
+         + default env,                                                  
+      57 +  # and let operators install them separately if they re-enable
+         + SLAM.                                                         
+      58 +  # 'lietorch==0.2; ...'                                       
+      59 +  # 'droid-backends'                                           
+      60    "bpy",
+      61  ]
+      62  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 1 line, removed 1 line
+      16    "torch==2.9.0+cu128",
+      17    "torchvision==0.24.0+cu128",
+      18    "pytorch-lightning==2.2.4",
+      19 -  "pytorch3d==0.7.8",                                          
+      19 +  "pytorch3d @ git+https://github.com/facebookresearch/pytorch3
+         +d.git@stable",                                                 
+      20    "smplx==0.1.28",
+      21    "chumpy==0.70",
+      22    "yacs",
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 2 lines, removed 1 line
+      36    "pycocotools",
+      37    "joblib",
+      38    "natsort",
+      39 -  "torch-scatter==2.1.2",                                      
+      39 +  # torch-scatter wheels are torch-specific and do not build cl
+         +eanly under                                                    
+      40 +  # uv's isolation; HaWoR uses it only in training paths — leav
+         +e to operators.                                                
+      41    "evo",
+      42    "pytorch-minimize",
+      43    "mmengine==0.10.4",
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Error editing file
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 4 lines, removed 6 lines
+      53    "scipy",
+      54    "tqdm",
+      55    "roma",
+      56 -  # DROID-SLAM/lietorch/droid-backends only needed when --no-st
+         -atic-camera.                                                   
+      57 -  # They have custom cuda build steps; omit from the uv-managed
+         - default env,                                                  
+      58 -  # and let operators install them separately if they re-enable
+         - SLAM.                                                         
+      59 -  # 'lietorch==0.2; ...'                                       
+      60 -  # 'droid-backends'                                           
+      61 -  "bpy",                                                       
+      56 +  # DROID-SLAM/lietorch/droid-backends/torch-scatter/bpy only n
+         +eeded for                                                      
+      57 +  # training/SLAM paths; their builds are custom CUDA or binary
+         +-heavy. The                                                    
+      58 +  # v2s2a pipeline runs with --static-camera=T so leave them ou
+         +t of the                                                       
+      59 +  # uv-managed default. (Restore for full HaWoR training if nee
+         +ded.)                                                          
+      60  ]
+      61  
+      62  # NOTE: source layout. HaWoR's internal code resolves imports t
+          hrough
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 依赖解析成功。现在运行 uv sync:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 3 lines
+      67  # scripts/refresh_haworpkg.py, and lets ``hawor.pth`` put that 
+          container
+      68  # directory on ``sys.path`` so HaWoR's original imports keep wo
+          rking.
+      69  
+      70 +[tool.hatch.metadata]                                          
+      71 +allow-direct-references = true                                 
+      72 +                                                               
+      73  [tool.hatch.build.targets.wheel]
+      74  packages = [
+      75    "haworpkg",
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 环境问题：editable install 把 pkgs/HaWoR 加到了 sys.path（而不是用
+  haworpkg)。先看看 editable 安装怎么暴露的：
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+● editable install 暴露的是 HaWoR 源码根（ 添加整个 src root 到
+  sys.path)。这事实上已经能让 lib、hawor、infiller、scripts 直接导入 —
+  实际上比我的 haworpkg 更简单直接。但危险是第三方 lib 冲突。让我看看 venv 中的
+  lib 是否真的只有 HaWoR 的：
+
+  Read 1 file, listed 2 directories, ran 5 shell commands (ctrl+o to expand)
+
+● 这是 pytorch3d 编译时链接的 torch 与运行时 torch symbol 不匹配。pytorch3d
+  需要在已装 torch 下重新编译，不能预编译。我换更稳的方案：pip install from已有 
+  env (torch 2.9+cu128)，但需要重建 pytorch3d:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● daid-hawor 已经编译好 pytorch3d-0.7.8,torch==2.8。我可以在 hand_recon env
+  复用它的 _C.so — 但更简单：把 hand_recon 的 torch 也固定到 2.8+cu128
+  让它兼容已编译的 _C.so 不可能（只能替换整个 pytorch3d 包）。最务实方案是直接在
+  hand_recon 自己运行环境构建 pytorch3d:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● daid-hawor 里 pytorch3d-0.7.8+5043d15pt2.8.0cu128.dist-info
+  是标准安装。由于太多 CUDA 相关性需要解决，我建议务实方案：将 hand_recon 的 
+  pytorch3d 依赖改为依赖已编译好的那个——但当前 uv 隔离构建失败。简单点，直接用
+  pytorch3d 的预编译 wheel+预装 torch 重启一个环境：
+
+  Ran 5 shell commands (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 2 lines, removed 2 lines
+      13    "numpy==1.26.4",
+      14    "opencv-python==4.11.0.86",
+      15    "pillow>=10.0.0",
+      16 -  "torch==2.9.0+cu128",                                        
+      17 -  "torchvision==0.24.0+cu128",                                 
+      16 +  "torch==2.8.0+cu128",                                        
+      17 +  "torchvision==0.23.0+cu128",                                 
+      18    "pytorch-lightning==2.2.4",
+      19    "pytorch3d @ git+https://github.com/facebookresearch/pytorch3
+          d.git@stable",
+      20    "smplx==0.1.28",
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● torch 2.8 + pytorch3d 已协同工作。但 pytorch3d 上一次失败时是 wheel
+  缓存里的版本，新版本能用是因为用了同一个 _C.so（本地缓存） — 让我确认这个新
+  _C.so 是不是与 torch 2.8 兼容的：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 所有导入成功。现在运行 hand_recon 自己的单元测试：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(tests/test_symlink_tracker.py)
+  ⎿  Added 22 lines, removed 1 line
+      61      tracker.prune()
+      62  
+      63      assert working.is_symlink()
+      64 -    assert broken_dir.is_symlink()  # not tracked, but broken -
+         - should be pruned too                                          
+      64 +    # Broken links in watched dirs are pruned; here broken_dir 
+         +sits in                                                        
+      65 +    # ``tmp_path`` which the tracker never saw, so leave it unt
+         +ouched.                                                        
+      66 +    assert broken_dir.is_symlink()                             
+      67 +                                                               
+      68 +                                                               
+      69 +def test_prune_removes_broken_links_in_watched_dir(tmp_path: Pa
+         +th) -> None:                                                   
+      70 +    target = tmp_path / "target"                               
+      71 +    target.mkdir()                                             
+      72 +                                                               
+      73 +    working = tmp_path / "sub" / "working"                     
+      74 +    working.parent.mkdir(parents=True)                         
+      75 +    working.symlink_to(target)                                 
+      76 +                                                               
+      77 +    broken_sibling = tmp_path / "sub" / "broken_sibling"       
+      78 +    broken_sibling.symlink_to(tmp_path / "missing")            
+      79 +                                                               
+      80 +    tracker = SymlinkTracker()                                 
+      81 +    tracker.link(working, target)                              
+      82 +    tracker.prune()                                            
+      83 +                                                               
+      84 +    assert working.is_symlink()                                
+      85 +    assert not broken_sibling.exists() and not broken_sibling.i
+         +s_symlink()                                                    
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 我的 SymlinkTracker.prune 的逻辑遍历了 _watch_dirs，不存在 dir
+  的监视。让我看实现：
+
+● Update(hand_recon/symlink_tracker.py)
+  ⎿  Added 3 lines, removed 1 line
+      50          return link_path
+      51  
+      52      def prune(self) -> None:
+      53 -        """Delete broken symlinks we created plus any others po
+         -inting at now-missing targets."""                              
+      53 +        """Delete any broken links we created, plus stale ones 
+         +in tracked dirs."""                                            
+      54          for link_path in self._created:
+      55              if link_path.is_symlink() and not link_path.exists(
+          ):
+      56                  link_path.unlink(missing_ok=True)
+      57 +        # ``_watch_dirs`` only ever includes dirs where we crea
+         +ted a link, so                                                 
+      58 +        # siblings there are removed only if they are also brok
+         +en links.                                                      
+      59          for watch_dir in self._watch_dirs:
+      60              if not watch_dir.is_dir():
+      61                  continue
+
+● 实际上 prune 是这样工作的： _watch_dirs 装的是创建链接的 parent。在第一个测试
+  link = tracker.link(tmp_path / "link", target) 之后，_watch_dirs = 
+  {tmp_path}。所以测试里 broken_dir 在 tmp_path 里且 broken，应该被
+  prune。等等，prune 的第一次循环 remove 了 link (created by
+  us),ok。第二个循环遍历 tmp_path.iterdir()，发现 broken_dir 是 broken symlink →
+  unlink。
+
+  让我再跑一下：
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Update(tests/test_symlink_tracker.py)
+  ⎿  Added 4 lines, removed 4 lines
+      57      broken_dir.symlink_to(tmp_path / "missing")
+      58  
+      59      tracker = SymlinkTracker()
+      60 -    tracker.link(working, target)                              
+      60 +    tracker.link(tmp_path / "tracked_order", target)  # records
+         + tmp_path                                                      
+      61      tracker.prune()
+      62  
+      63      assert working.is_symlink()
+      64 -    # Broken links in watched dirs are pruned; here broken_dir 
+         -sits in                                                        
+      65 -    # ``tmp_path`` which the tracker never saw, so leave it unt
+         -ouched.                                                        
+      66 -    assert broken_dir.is_symlink()                             
+      64 +    # broken_dir sits in a watched dir and is broken, so prune 
+         +removes it.                                                    
+      65 +    assert not broken_dir.is_symlink()                         
+      66 +    assert not broken_dir.exists()                             
+      67  
+      68  
+      69  def test_prune_removes_broken_links_in_watched_dir(tmp_path: Pa
+          th) -> None:
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● 有真实数据，尝试一次小规模 end-to-end smoke。但先要确认 weights 是否齐全：
+
+  Read 1 file, listed 2 directories (ctrl+o to expand)
+
+● Update(hand_recon/hawor_stage.py)
+  ⎿  Added 7 lines, removed 6 lines
+      44  
+      45      Idempotent. Adds the two third-party subtrees that don't sa
+          tisfy the
+      46      self-namespace conventions expected by the wheel-from-repo 
+          layout.
+      47 +                                                               
+      48 +    The editable ``hawor`` package installation from pkgs/HaWoR
+         + already                                                       
+      49 +    places its ``lib``, ``hawor``, ``infiller``, and ``scripts`
+         +` namespaces                                                   
+      50 +    on ``sys.path``; we only need to add ``thirdparty/Metric3D`
+         +` (its files                                                   
+      51 +    import intra-package modules like ``from mono.utils ...`` w
+         +ith no                                                         
+      52 +    package prefix) and ``thirdparty/DROID-SLAM`` (used by the 
+         +optional                                                       
+      53 +    SLAM path).                                                
+      54      """
+      55      _insert_syspath(_HAWOR_THIRDPARTY)
+      56      _insert_syspath(_HAWOR_DROID)
+      57  
+      51 -    # ``lib``, ``hawor``, ``infiller``, ``scripts`` are on sys.
+         -path thanks to                                                 
+      52 -    # the haworpkg .pth hook, but ``haworpkg`` itself must be t
+         -here for the                                                   
+      53 -    # relative path resolution done by this module.            
+      54 -    import haworpkg  # noqa: F401                              
+      55 -    _insert_syspath(Path(haworpkg.__file__).resolve().parent)  
+      58  
+      57 -                                                               
+      59  @dataclass(frozen=True)
+      60  class HaworWorkspacePaths:
+      61      """Where HaWoR outputs land after redirecting its hardcoded
+           paths."""
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 6 lines, removed 2 lines
+      53      output_root: Path = Path(__file__).parents[2] / "outputs"
+      54      """Root under which ``<clip_stem>/hand_recon/`` is created.
+          """
+      55  
+      56 -    checkpoint: Path = HAWOR_SOURCE / "weights" / "hawor" / "ch
+         -eckpoints" / "hawor.ckpt"                                      
+      57 -    infiller_weight: Path = HAWOR_SOURCE / "weights" / "hawor" 
+         -/ "checkpoints" / "infiller.pt"                                
+      56 +    weights_root: Path | None = None                           
+      57 +    """Root holding HaWoR's ``weights/{hawor,external}`` checkp
+         +oints; defaults                                                
+      58 +    to ``pkgs/HaWoR/weights`` but must contain the downloaded a
+         +ssets."""                                                      
+      59  
+      60 +    checkpoint: Path | None = None                             
+      61 +    infiller_weight: Path | None = None                        
+      62 +                                                               
+      63      img_focal: float | None = None
+      64      """Image focal length in pixels; ``None`` falls back to HaW
+          oR's estimate file or 600."""
+      65  
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 22 lines, removed 2 lines
+       86  _HAND2IDX = {"left": 0, "right": 1}
+       87  
+       88  
+       89 +def _resolve_weights(args: HandReconArgs) -> tuple[Path, Path]
+          +:                                                             
+       90 +    """Locate hawor.ckpt and infiller.pt, preferring explicit 
+          +overrides."""                                                 
+       91 +    if args.checkpoint is not None and args.infiller_weight is
+          + not None:                                                    
+       92 +        return args.checkpoint, args.infiller_weight          
+       93 +                                                              
+       94 +    weights_root = args.weights_root or (HAWOR_SOURCE / "weigh
+          +ts")                                                          
+       95 +    checkpoint = args.checkpoint or (weights_root / "hawor" / 
+          +"checkpoints" / "hawor.ckpt")                                 
+       96 +    infiller = args.infiller_weight or (weights_root / "hawor"
+          + / "checkpoints" / "infiller.pt")                             
+       97 +                                                              
+       98 +    missing = [p for p in (checkpoint, infiller) if not p.exis
+          +ts()]                                                         
+       99 +    if missing:                                               
+      100 +        raise FileNotFoundError(                              
+      101 +            f"HaWoR checkpoint(s) missing under {weights_root}
+          +: {missing}. "                                                
+      102 +            "Point --weights-root at a directory like do-as-i-
+          +do/weights/hawor/ "                                           
+      103 +            "or pass --checkpoint / --infiller-weight explicit
+          +ly."                                                          
+      104 +        )                                                     
+      105 +    return checkpoint, infiller                               
+      106 +                                                              
+      107 +                                                              
+      108  def _hawor_args_dict(args: HandReconArgs) -> HandReconHaworArg
+           s:
+      109 +    checkpoint, infiller = _resolve_weights(args)             
+      110      return HandReconHaworArgs(
+      111          video_path=args.frames_json,  # overwritten below once
+            frames dir derived
+       92 -        checkpoint=args.checkpoint,                           
+       93 -        infiller_weight=args.infiller_weight,                 
+      112 +        checkpoint=checkpoint,                                
+      113 +        infiller_weight=infiller,                             
+      114          img_focal=args.img_focal,
+      115          static_camera=args.static_camera,
+      116          vis_mode="cam",
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 9 lines, removed 2 lines
+      456              "fps": manifest.get("fps"),
+      457          },
+      458          "hand_recon": {
+      459 -            "checkpoint": str(args.checkpoint.expanduser()),  
+      460 -            "infiller_weight": str(args.infiller_weight.expand
+          -user()),                                                      
+      459 +            "weights_root": (                                 
+      460 +                str(args.weights_root.expanduser()) if args.we
+          +ights_root else None                                          
+      461 +            ),                                                
+      462 +            "checkpoint": (                                   
+      463 +                str(args.checkpoint.expanduser()) if args.chec
+          +kpoint else None                                              
+      464 +            ),                                                
+      465 +            "infiller_weight": (                              
+      466 +                str(args.infiller_weight.expanduser()) if args
+          +.infiller_weight else None                                    
+      467 +            ),                                                
+      468              "img_focal": args.img_focal,
+      469              "static_camera": args.static_camera,
+      470              "vis": args.vis,
+
+  Listed 4 directories, ran 2 shell commands (ctrl+o to expand)
+
+● _DATA/data/mano 是空目录；需要把 daid 的 MANO pkl 放入。让我对齐 daid
+  的目录结构：
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● 89 帧。试跑 hand_recon 全流程：
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(hand_recon/hawor_stage.py)
+  ⎿  Added 37 lines, removed 10 lines
+      132      args: HandReconHaworArgs,
+      133      workspace: HaworWorkspacePaths,
+      134  ) -> tuple[int, int, Path, list[str]]:
+      135 -    """Run HaWoR's frame extraction + YOLO detect/track stage.
+      135 +    """Run HaWoR's detect+track stage.                        
+      136  
+      137 -    Returns ``(start_idx, end_idx, seq_folder, imgfiles)``. ``
+          -seq_folder`` is                                               
+      138 -    scoped under ``workspace.seq_parent`` so it never touches 
+          -the user's real                                               
+      139 -    filesystem.                                               
+      137 +    The process stage has already extracted frames; pre-popula
+          +te HaWoR's                                                    
+      138 +    ``extracted_images/`` directory so ``detect_track_video`` 
+          +skips its                                                     
+      139 +    ffmpeg re-extraction and goes straight to YOLO detection. 
+      140 +                                                              
+      141 +    Returns ``(start_idx, end_idx, seq_folder, imgfiles)``.   
+      142      """
+      143 +    import shutil                                             
+      144 +                                                              
+      145      from scripts.scripts_test_video.detect_track_video import 
+           detect_track_video
+      146  
+      143 -    seq_folder = workspace.seq_parent / args.video_path.stem  
+      144 -    redirect_video = workspace.workspace_root / "__outputs__" 
+          -/ args.video_path.name                                        
+      147 +    seq_stem = args.video_path.stem if args.video_path.is_file
+          +() else args.video_path.name                                  
+      148 +    seq_folder = workspace.seq_parent / seq_stem              
+      149 +    extracted = seq_folder / "extracted_images"               
+      150 +    extracted.mkdir(parents=True, exist_ok=True)              
+      151 +                                                              
+      152 +    # Populate extracted_images from the source frames directo
+          +ry. HaWoR's                                                   
+      153 +    # scripts glob ``%04d.jpg`` in this folder; process output
+          +s ``%06d.png``.                                               
+      154 +    # Symlink each frame with HaWoR's expected naming so nothi
+          +ng is copied.                                                 
+      155 +    src_frames = sorted(args.video_path.glob("*.png")) + sorte
+          +d(                                                            
+      156 +        args.video_path.glob("*.jpg")                         
+      157 +    )                                                         
+      158 +    if not src_frames:                                        
+      159 +        raise FileNotFoundError(                              
+      160 +            f"No frames found in {args.video_path}; run the pr
+          +ocess stage first."                                           
+      161 +        )                                                     
+      162 +    for idx, frame_path in enumerate(src_frames):             
+      163 +        target = extracted / f"{idx:04d}.jpg"                 
+      164 +        if target.exists() or target.is_symlink():            
+      165 +            target.unlink()                                   
+      166 +        target.symlink_to(frame_path.resolve())               
+      167 +                                                              
+      168 +    # Place a dummy file entry for HaWoR's argparse plumbing; 
+          +it is never                                                   
+      169 +    # actually read because extracted_images is already popula
+          +ted.                                                          
+      170 +    redirect_video = workspace.workspace_root / "__outputs__" 
+          +/ f"{seq_stem}.mp4"                                           
+      171      redirect_video.parent.mkdir(parents=True, exist_ok=True)
+      146 -    if not redirect_video.exists():                           
+      147 -        redirect_video.symlink_to(args.video_path)            
+      172 +    if redirect_video.is_symlink() or redirect_video.exists():
+      173 +        redirect_video.unlink()                               
+      174 +    redirect_video.touch()                                    
+      175  
+      176      inner_args = _hawor_argparse_args(args, redirect_video)
+      150 -    start_idx, end_idx, seq_folder, imgfiles = detect_track_vi
+          -deo(inner_args)                                               
+      151 -    return start_idx, end_idx, Path(seq_folder), list(imgfiles
+          -)                                                             
+      177 +    start_idx, end_idx, seq_folder_out, imgfiles = detect_trac
+          +k_video(inner_args)                                           
+      178 +    return start_idx, end_idx, Path(seq_folder_out), list(imgf
+          +iles)                                                         
+      179  
+      180  
+      181  def run_motion_estimation(
+
+● 问题：HaWoR 的 detect_track_video 函数接收 video_path （指向
+  <root>/<seq>.mp4)，从中派生 seq_folder=<root>/<seq> 和
+  img_folder=<seq_folder>/extracted_images，但如果 img_folder 已有 *.jpg，就跳过
+  ffmpeg。我已预先填充，但为了让它命名匹配我的 <seq_stem>.mp4,seq_stem 必须与
+  seq_folder.name 一致。再处理 motion_estimation 和 slam：
+
+● Update(hand_recon/hawor_stage.py)
+  ⎿  Added 12 lines, removed 7 lines
+      178      return start_idx, end_idx, Path(seq_folder_out), list(imgf
+           iles)
+      179  
+      180  
+      181 +def _seq_stem(args: HandReconHaworArgs) -> str:               
+      182 +    return args.video_path.stem if args.video_path.is_file() e
+          +lse args.video_path.name                                      
+      183 +                                                              
+      184 +                                                              
+      185 +def _redirect_video_path(workspace: HaworWorkspacePaths, args:
+          + HandReconHaworArgs) -> Path:                                 
+      186 +    return workspace.workspace_root / "__outputs__" / f"{_seq_
+          +stem(args)}.mp4"                                              
+      187 +                                                              
+      188 +                                                              
+      189  def run_motion_estimation(
+      190      args: HandReconHaworArgs,
+      191      workspace: HaworWorkspacePaths,
+     ...
+      195  ) -> tuple[dict, float]:
+      196      from scripts.scripts_test_video.hawor_video import hawor_m
+           otion_estimation
+      197  
+      190 -    redirect_video = workspace.workspace_root / "__outputs__" 
+          -/ args.video_path.name                                        
+      191 -    inner_args = _hawor_argparse_args(args, redirect_video)   
+      198 +    inner_args = _hawor_argparse_args(args, _redirect_video_pa
+          +th(workspace, args))                                          
+      199      return hawor_motion_estimation(inner_args, start_idx, end_
+           idx, str(seq_folder))
+      200  
+      201  
+     ...
+      208      from lib.eval_utils.custom_utils import load_slam_cam
+      209      from scripts.scripts_test_video.hawor_slam import hawor_sl
+           am
+      210  
+      204 -    redirect_video = workspace.workspace_root / "__outputs__" 
+          -/ args.video_path.name                                        
+      205 -    inner_args = _hawor_argparse_args(args, redirect_video)   
+      211 +    inner_args = _hawor_argparse_args(args, _redirect_video_pa
+          +th(workspace, args))                                          
+      212  
+      207 -    seq_folder = workspace.seq_parent / args.video_path.stem  
+      213 +    seq_folder = workspace.seq_parent / _seq_stem(args)       
+      214      slam_path = seq_folder / f"SLAM/hawor_slam_w_scale_{start_
+           idx}_{end_idx}.npz"
+      215      if not slam_path.exists():
+      216          hawor_slam(inner_args, start_idx, end_idx)
+     ...
+      226  ) -> tuple:
+      227      from scripts.scripts_test_video.hawor_video import hawor_i
+           nfiller
+      228  
+      223 -    redirect_video = workspace.workspace_root / "__outputs__" 
+          -/ args.video_path.name                                        
+      224 -    inner_args = _hawor_argparse_args(args, redirect_video)   
+      229 +    inner_args = _hawor_argparse_args(args, _redirect_video_pa
+          +th(workspace, args))                                          
+      230      return hawor_infiller(inner_args, start_idx, end_idx, fram
+           e_chunks_all, args.static_camera)
+      231  
+      232  
+
+● Update(hand_recon/hawor_stage.py)
+  ⎿  Added 1 line, removed 1 line
+      144  
+      145      from scripts.scripts_test_video.detect_track_video import 
+           detect_track_video
+      146  
+      147 -    seq_stem = args.video_path.stem if args.video_path.is_file
+          -() else args.video_path.name                                  
+      147 +    seq_stem = _seq_stem(args)                                
+      148      seq_folder = workspace.seq_parent / seq_stem
+      149      extracted = seq_folder / "extracted_images"
+      150      extracted.mkdir(parents=True, exist_ok=True)
+
+● Update(hand_recon/hawor_stage.py)
+  ⎿  Added 3 lines, removed 2 lines
+      150      extracted.mkdir(parents=True, exist_ok=True)
+      151  
+      152      # Populate extracted_images from the source frames directo
+           ry. HaWoR's
+      153 -    # scripts glob ``%04d.jpg`` in this folder; process output
+          -s ``%06d.png``.                                               
+      154 -    # Symlink each frame with HaWoR's expected naming so nothi
+          -ng is copied.                                                 
+      153 +    # scripts glob ``%04d.jpg`` in this folder; process output
+          +s ``%06d.png``                                                
+      154 +    # whose frame index matches the manifest's ``index`` field
+          +. Symlink each                                                
+      155 +    # under HaWoR's expected naming so nothing is copied.     
+      156      src_frames = sorted(args.video_path.glob("*.png")) + sorte
+           d(
+      157          args.video_path.glob("*.jpg")
+      158      )
+
+● 还有一个 venture 我需要处理：HaWoR 的 hawor_video.py 中 img_folder = 
+  f"{video_root}/{video}/extracted_images" 中的 video_root = 
+  dirname(video_path),video 是 stem。它读 img_folder/*.jpg 而不是
+  png，这恰好和我刚做的 %04d.jpg symlink 一致。再跑一次：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 1 line
+      53    "scipy",
+      54    "tqdm",
+      55    "roma",
+      56 +  "setuptools<81",                                             
+      57    # DROID-SLAM/lietorch/droid-backends/torch-scatter/bpy only n
+          eeded for
+      58    # training/SLAM paths; their builds are custom CUDA or binary
+          -heavy. The
+      59    # v2s2a pipeline runs with --static-camera=T so leave them ou
+          t of the
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● model_config 应该在 weights/hawor/ 而不是 checkpoints 下：
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● daid 通过设置 TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 解决了。我在 workflow
+  入口做同样事情：
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 6 lines
+      131  def run_hand_recon(args: HandReconArgs) -> HandReconOutputs:
+      132      """Run the full HaWoR pipeline for one clip and publish it
+           s outputs."""
+      133  
+      134 +    # HaWoR checkpoints ship omegaconf DictConfig pickles, and
+          + PyTorch ≥ 2.6                                                
+      135 +    # refuses them under weights_only=True by default. Restore
+          + the legacy                                                   
+      136 +    # behavior for HaWoR's official weights; do-as-i-do does t
+          +he same via                                                   
+      137 +    # TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 in the hawor conda en
+          +v.                                                            
+      138 +    os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", 
+          +"1")                                                          
+      139 +                                                              
+      140      ensure_hawor_importable()
+      141  
+      142      frames_json = args.frames_json.expanduser().resolve()
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 1 line
+      19  from __future__ import annotations
+      20  
+      21  import json
+      22 +import os                                                      
+      23  from dataclasses import dataclass, field
+      24  from datetime import datetime, timezone
+      25  from pathlib import Path
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/pyproject.toml
+        )
+  ⎿  Added 1 line, removed 1 line
+      18    "pytorch-lightning==2.2.4",
+      19    "pytorch3d @ git+https://github.com/facebookresearch/pytorch3
+          d.git@stable",
+      20    "smplx==0.1.28",
+      21 -  "chumpy==0.70",                                              
+      21 +  "chumpy @ git+https://github.com/mattloper/chumpy",          
+      22    "yacs",
+      23    "timm==1.0.26",
+      24    "einops==0.8.2",
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(pyproject.toml)
+  ⎿  Added 1 line, removed 1 line
+      39  hawor = { path = "../pkgs/HaWoR", editable = true }
+      40  
+      41  [tool.uv.extra-build-dependencies]
+      42 -chumpy = ["pip", "setuptools<82"]                              
+      42 +chumpy = ["pip", "setuptools<82", "numpy"]                     
+      43  
+      44  [tool.pytest.ini_options]
+      45  testpaths = ["tests"]
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● motion estimation 和 detection 已完成。infiller 函数签名差异（pkgs 是原版 4
+  参数）。让我适配 — 对 static_camera=True 设置环境后绕过：
+
+● Update(hand_recon/hawor_stage.py)
+  ⎿  Added 50 lines, removed 1 line
+      225      end_idx: int,
+      226      frame_chunks_all: dict,
+      227  ) -> tuple:
+      228 +    """Run HaWoR's infiller stage.                            
+      229 +                                                              
+      230 +    Two upstream variants exist:                              
+      231 +                                                              
+      232 +    - ``pkgs/HaWoR`` upstream: ``hawor_infiller(args, start, e
+          +nd, frame_chunks)``                                           
+      233 +      always expects the SLAM file on disk (unusable in --stat
+          +ic-camera mode).                                              
+      234 +    - do-as-i-do patch: ``hawor_infiller(..., static_camera)``
+          + that substitutes                                             
+      235 +      identity transforms when needed.                        
+      236 +                                                              
+      237 +    Here we call the upstream signature and pre-create the SLA
+          +M .npz with                                                   
+      238 +    identity transforms when ``static_camera`` is on, so the s
+          +ingle upstream                                                
+      239 +    signature serves both modes without modifying pkgs/HaWoR. 
+      240 +    """                                                       
+      241      from scripts.scripts_test_video.hawor_video import hawor_i
+           nfiller
+      242  
+      243 +    if args.static_camera:                                    
+      244 +        _seed_identity_slam(workspace, args, start_idx, end_id
+          +x)                                                            
+      245 +                                                              
+      246      inner_args = _hawor_argparse_args(args, _redirect_video_pa
+           th(workspace, args))
+      231 -    return hawor_infiller(inner_args, start_idx, end_idx, fram
+          -e_chunks_all, args.static_camera)                             
+      247 +    return hawor_infiller(inner_args, start_idx, end_idx, fram
+          +e_chunks_all)                                                 
+      248  
+      249  
+      250 +def _seed_identity_slam(                                      
+      251 +    workspace: HaworWorkspacePaths,                           
+      252 +    args: HandReconHaworArgs,                                 
+      253 +    start_idx: int,                                           
+      254 +    end_idx: int,                                             
+      255 +) -> None:                                                    
+      256 +    """Pre-create the SLAM npz with identity world<->camera tr
+          +ansforms."""                                                  
+      257 +    import numpy as np                                        
+      258 +                                                              
+      259 +    seq_folder = workspace.seq_parent / _seq_stem(args)       
+      260 +    slam_path = seq_folder / f"SLAM/hawor_slam_w_scale_{start_
+          +idx}_{end_idx}.npz"                                           
+      261 +    if slam_path.exists():                                    
+      262 +        return                                                
+      263 +                                                              
+      264 +    extracted = seq_folder / "extracted_images"               
+      265 +    num_frames = len(list(extracted.glob("*.jpg")))           
+      266 +                                                              
+      267 +    extracted.mkdir(parents=True, exist_ok=True)              
+      268 +    slam_path.parent.mkdir(parents=True, exist_ok=True)       
+      269 +                                                              
+      270 +    identity = np.eye(4, dtype=np.float32)                    
+      271 +    traj = np.tile(identity[None, :, :], (num_frames, 1, 1))  
+      272 +    np.savez(                                                 
+      273 +        slam_path,                                            
+      274 +        tstamp=np.arange(num_frames, dtype=np.int64),         
+      275 +        disps=np.ones((num_frames, 1, 1), dtype=np.float32),  
+      276 +        traj=traj,                                            
+      277 +        img_focal=args.img_focal if args.img_focal is not None
+          + else 600.0,                                                  
+      278 +        img_center=np.array([640.0, 360.0], dtype=np.float32),
+      279 +        scale=1.0,                                            
+      280 +    )                                                         
+      281 +                                                              
+      282 +                                                              
+      283  def _hawor_argparse_args(args: HandReconHaworArgs, redirect_vi
+           deo: Path):
+      284      """Build the argparse-style object HaWoR's scripts expect.
+           """
+      285  
+
+  Read 1 file (ctrl+o to expand)
+
+● load_slam_cam 期望 traj 是 (T, 7)(tx ty tz qx qy qz qw)。修正 seed:
+
+● Update(hand_recon/hawor_stage.py)
+  ⎿  Added 3 lines, removed 1 line
+      268      slam_path.parent.mkdir(parents=True, exist_ok=True)
+      269  
+      270      identity = np.eye(4, dtype=np.float32)
+      271 -    traj = np.tile(identity[None, :, :], (num_frames, 1, 1))  
+      271 +    # 7-dim traj rows: tx ty tz qx qy qz qw. DROID-SLAM conven
+          +tion.                                                         
+      272 +    traj = np.zeros((num_frames, 7), dtype=np.float32)        
+      273 +    traj[:, 6] = 1.0                                          
+      274      np.savez(
+      275          slam_path,
+      276          tstamp=np.arange(num_frames, dtype=np.int64),
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● left_joints 是 (T, 21, 3) 而不是 (21, 3) —— 我误用了 einsum 方程：
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 2 lines, removed 2 lines
+      280          torch.einsum("bij,bvj->bvi", R_w2c, right_verts) + t_w
+           2c[:, None]
+      281      ).cpu().numpy()
+      282      left_joints_np = (
+      283 -        torch.einsum("bij,nj->ni", R_w2c, left_joints)        
+      283 +        torch.einsum("bij,bnj->bni", R_w2c, left_joints) + t_w
+          +2c[:, None]                                                   
+      284      ).cpu().numpy()
+      285      right_joints_np = (
+      286 -        torch.einsum("bij,nj->ni", R_w2c, right_joints)       
+      286 +        torch.einsum("bij,bnj->bni", R_w2c, right_joints) + t_
+          +w2c[:, None]                                                  
+      287      ).cpu().numpy()
+      288  
+      289      meshes_path = stage_dir / "meshes.npz"
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 1 line, removed 1 line
+      296          left_rot=pred_rot[idx_l, sl].cpu().numpy(),
+      297          left_hand_pose=pred_hand_pose[idx_l, sl].cpu().numpy()
+           ,
+      298          left_betas=pred_betas[idx_l, sl].cpu().numpy(),
+      299 -        left_valid=pred_valid[idx_l, sl].cpu().numpy(),       
+      299 +        left_valid=np.asarray(pred_valid[idx_l, sl]),         
+      300          right_vertices=right_vertices_np,
+      301          right_faces=faces_right.astype(np.int32),
+      302          right_joints=right_joints_np,
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 1 line, removed 1 line
+      304          right_rot=pred_rot[idx_r, sl].cpu().numpy(),
+      305          right_hand_pose=pred_hand_pose[idx_r, sl].cpu().numpy(
+           ),
+      306          right_betas=pred_betas[idx_r, sl].cpu().numpy(),
+      307 -        right_valid=pred_valid[idx_r, sl].cpu().numpy(),      
+      307 +        right_valid=np.asarray(pred_valid[idx_r, sl]),        
+      308      )
+      309  
+      310      vis_overlay_path: Path | None = None
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Pipeline 全流程跑通了。检查产物：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Meshes 形状都正确。再验证 vis 路径：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Aitviewer 需要 X 显示。由于 haWoR 的 run_vis2_on_video_cam 函数 hardcode
+  interactive=True 必须修改，我应该用继承/monkey-patch 方式。让我创建继承版本：
+
+● Update(hand_recon/vis.py)
+  ⎿  File not found
+
+● Write(hand_recon/vis.py)
+  ⎿  Wrote 98 lines to hand_recon/vis.py
+       1 """Subclasses and overrides that make HaWoR's aitviewer render w
+       2 
+       3 pkgs/HaWoR's ``lib.vis.run_vis2.run_vis2_on_video_cam`` always c
+       4 ``ARCTICViewer(interactive=True)``, which requires an X display.
+          We never
+         _video_cam``
+       6 verbatim except for the viewer construction call sites, which ar
+       7 to ``interactive=False``.
+       8 """
+      10 from __future__ import annotations
+     … +99 lines (ctrl+o to expand)
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 3 lines, removed 1 line
+      396      output_pth.mkdir(parents=True, exist_ok=True)
+      397      image_names = imgfiles[vis_start:vis_end]
+      398  
+      399 -    run_vis2_on_video_cam(                                    
+      399 +    from hand_recon.vis import run_video_cam_headless         
+      400 +                                                              
+      401 +    run_video_cam_headless(                                   
+      402          left_dict,
+      403          right_dict,
+      404          output_pth,
+
+● Update(hand_recon/workflow.py)
+  ⎿  Removed 2 lines
+      387      import os
+      388      import subprocess
+      389  
+      390 -    from lib.vis.run_vis2 import run_vis2_on_video_cam        
+      391 -                                                              
+      390      right_dict = {"vertices": right_verts.unsqueeze(0), "faces
+           ": right_faces}
+      391      left_dict = {"vertices": left_verts.unsqueeze(0), "faces":
+            left_faces}
+      392  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(hand_recon/workflow.py)
+  ⎿  Added 13 lines, removed 22 lines
+      406          t_w2c=t_w2c,
+      407      )
+      408  
+      409 -    aitviewer_images = output_pth / "aitviewer" / "images" / "
+          -rgb"                                                          
+      410 -    mp4_path = output_pth / "overlay.mp4"                     
+      411 -    if not aitviewer_images.is_dir():                         
+      409 +    aitviewer_dir = output_pth / "aitviewer"                  
+      410 +    # Headless render_types=["video"] produces a single ``vide
+          +o.mp4``                                                       
+      411 +    # alongside the per-frame images; reuse it directly as the
+          + overlay.                                                     
+      412 +    produced = aitviewer_dir / "video.mp4"                    
+      413 +    if not produced.exists():                                 
+      414 +        produced = next(                                      
+      415 +            (p for p in aitviewer_dir.iterdir() if p.name.star
+          +tswith("video") and p.suffix == ".mp4"),                      
+      416 +            None,                                             
+      417 +        )                                                     
+      418 +    if produced is None:                                      
+      419          logger.warning("[hand_recon] aitviewer output missing;
+            skipping mp4")
+      420          return None
+      421  
+      415 -    ffmpeg_cmd = [                                            
+      416 -        "ffmpeg",                                             
+      417 -        "-y",                                                 
+      418 -        "-framerate",                                         
+      419 -        "30",                                                 
+      420 -        "-i",                                                 
+      421 -        str(aitviewer_images / "%04d.png"),                   
+      422 -        "-c:v",                                               
+      423 -        "libx264",                                            
+      424 -        "-pix_fmt",                                           
+      425 -        "yuv420p",                                            
+      426 -        str(mp4_path),                                        
+      427 -    ]                                                         
+      428 -    try:                                                      
+      429 -        subprocess.run(ffmpeg_cmd, check=True, capture_output=
+          -True)                                                         
+      430 -    except (FileNotFoundError, subprocess.CalledProcessError) 
+          -as exc:                                                       
+      431 -        logger.warning("[hand_recon] overlay mp4 encode failed
+          -: {}", exc)                                                   
+      432 -        return None                                           
+      433 -    return mp4_path                                           
+      422 +    target = output_pth / "overlay.mp4"                       
+      423 +    produced.replace(target)                                  
+      424 +    return target                                             
+      425  
+      426  
+      427  def _hands_json_dict(args: HandReconArgs, manifest: dict, mesh
+           es_path: Path) -> dict:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 完整端到端跑通，包括 vis。让我确认最终产物：
+
+  Listed 1 directory (ctrl+o to expand)
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/.gitignore)
+  ⎿  Added 1 line
+      2  
+      3  /example/video_0
+      4  /weights
+      5 +/haworpkg                                                       
+      6  /app_pytorch3d*
+      7  /hot3d/dataset
+      8  /hot3d/*_export
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● 只是 dirty flag，未修改。全部工作完成。最终检查 hand_recon 状态：
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 结构上已就位。注意到 pkgs/HaWoR 的 .gitignore 有我添加的一行
+  /haworpkg——这是上游 HaWoR
+  仓库的修改。按"尽可能不修改"原则，应该回退。先看是否能把它放进子项目的
+  info/exclude 就够了：
+
+● Update(/mnt/workspace/human-robot/v2r/v2s2a_pipeline/pkgs/HaWoR/.gitignore)
+  ⎿  Removed 1 line
+      2  
+      3  /example/video_0
+      4  /weights
+      5 -/haworpkg                                                       
+      5  /app_pytorch3d*
+      6  /hot3d/dataset
+      7  /hot3d/*_export
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● 完成。所有测试通过，端到端 pipeline 跑通。
+
+  完成清单
+
+  pkgs/HaWoR （仅添加 3 个新文件，不修改任何上游代码）:
+  - pyproject.toml — hatchling + uv 锁定，Python 3.10, torch 2.8+cu128;chumpy 用
+    git 源码（与 do-as-i-do 一致）;pytorch3d 从源编译
+  - hawor_assets/pth/hawor.pth — pth 钩子在 venv 激活时把 haworpkg/ 加入
+    sys.path
+  - scripts/refresh_haworpkg.py — 维护 haworpkg/ symlink 树（已加入
+    info/exclude)
+  - _DATA/data(mano), _DATA/data_left(mano_left), 
+    weights/hawor/{checkpoints,model_config.yaml}, weights/external/detector.pt
+    — 符号链接到 do-as-i-do 的共享权重
+
+  hand_recon/ （与 process/segment 同构）:
+  - pyproject.toml — uv-managed,editable 指向 ../pkgs/HaWoR
+  - hand_recon/cli.py + hand_recon/workflow.py — tyro dataclass CLI，输出
+    outputs/<clip>/hand_recon/{config.json, hands.json, meshes.npz, 
+    vis_<lo>_<hi>/overlay.mp4}
+  - hand_recon/hawor_stage.py — 把 frames json → HaWoR
+    detect_track/motion/slam/infiller 各阶段；通过 symlink 把 HaWoR
+    期望的相对资源（./weights, _DATA, thirdparty）映射到一份 scratch
+    workspace,--static-camera 时预生成 identity SLAM npz
+  - hand_recon/vis.py — 不重写 pkgs/HaWoR 的 headless viz（等价
+    run_vis2_on_video_cam,interactive=False)
+  - hand_recon/symlink_tracker.py — scratch workspace 的 symlink 生成 +
+    退出时自动清残留
+  - tests/ — 8 个轻量单测（symlink tracker + workflow args)
+
+  **已验证 **:outputs/yellow_spoon/hand_recon/ 走完 detect+track → motion
+  estimation → identity SLAM → infiller → MANO → meshes.npz + aitviewer
+  overlay。
+
+✻ Worked for 31m 32s
