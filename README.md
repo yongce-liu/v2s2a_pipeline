@@ -11,12 +11,16 @@ packages under this repo, each with its own uv env (same style as
 | `scene_construction/` | 1. dataset processing, 2. CoACD convex decomp, 3. MuJoCo scene generation | `uv run scene_construction --clip-root outputs/yellow_spoon --object-trajectory auto` |
 | `retarget/` | 4. mink IK, 4.5. pedestal resolution | `uv run retarget --task yellow_spoon` |
 | `physics_opt/` | 5. sampling-based MPC physics optimization (MuJoCo Warp) | `uv run physics_opt --task yellow_spoon` |
+| `rl_training/` | 6. Isaac Lab 3.0 beta2 + RSL-RL residual-policy training/evaluation/export | `uv run --no-sync v2s2a-rl train --bundle .../task_bundle.json --output-dir ... --viz none` |
 
 All three write into the clip root `outputs/<clip>/`: scene_construction
 defaults its output root to `outputs/<clip>/scene_construction` (do-as-i-do
 `{robot}/{hand}/{task}/{data_id}` layout + `assets/` inside), retarget and
 physics_opt point at the same directory by default, and stage-5 artifacts land
-in `.../{robot}/{hand}/{task}/{data_id}/physics_opt/`. Robot-hand MJCF assets
+in `.../{robot}/{hand}/{task}/{data_id}/physics_opt/`. `rl_training` validates
+`trajectory_kinematic.npz` + `scene.xml` into a checksummed bundle, then learns
+an unassisted task policy from the hand/object trajectories and reconstructed
+assets; see [`rl_training/README.md`](rl_training/README.md). Robot-hand MJCF assets
 live in the repo-level `assets/hands/` directory (untracked — managed outside
 git).
 
